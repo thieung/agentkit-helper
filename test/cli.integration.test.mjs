@@ -14,7 +14,11 @@ function runCli(args, env, cwd = root) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(process.execPath, [cli, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      env: {
+        ...process.env,
+        AK_HELPER_PPM_BIN: "pi-profile-manager-not-installed-for-test",
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -41,7 +45,7 @@ test("bare interactive mode fails closed outside a TTY", async () => {
   assert.match(result.stderr, /pass explicit flags and --yes/);
 });
 
-test("install and update delegate exact lifecycle commands to ak", { skip: process.platform === "win32" }, async () => {
+test("install and update delegate exact lifecycle commands to ak", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-cli-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");
@@ -115,7 +119,7 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
   }
 });
 
-test("project update runs multiple selected runtimes as valid sequential ak commands", { skip: process.platform === "win32" }, async () => {
+test("project update runs multiple selected runtimes as valid sequential ak commands", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-multi-update-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");
@@ -149,7 +153,7 @@ if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
   }
 });
 
-test("multi-runtime install runs one official ak invocation per runtime", { skip: process.platform === "win32" }, async () => {
+test("multi-runtime install runs one official ak invocation per runtime", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-multi-install-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");
@@ -185,7 +189,7 @@ if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
   }
 });
 
-test("ak failures run verbose but show only a short useful summary", { skip: process.platform === "win32" }, async () => {
+test("ak failures run verbose but show only a short useful summary", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-verbose-error-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");
@@ -222,7 +226,7 @@ if (args[0] === "--version") {
   }
 });
 
-test("non-interactive install never turns --yes into force consent", { skip: process.platform === "win32" }, async () => {
+test("non-interactive install never turns --yes into force consent", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-force-consent-"));
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
@@ -258,7 +262,7 @@ if (args[0] === "--version") {
   }
 });
 
-test("dedicated self-update delegates only the signed binary lifecycle", { skip: process.platform === "win32" }, async () => {
+test("dedicated self-update delegates only the signed binary lifecycle", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-self-update-"));
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
@@ -358,7 +362,7 @@ process.stdin.on("end", () => {
   }
 });
 
-test("update-all inventories global and registered Kit installs before sequential updates", { skip: process.platform === "win32" }, async () => {
+test("update-all inventories global and registered Kit installs before sequential updates", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-update-all-"));
   const project = join(directory, "project");
   const akHome = join(directory, "home", ".agentkit");
@@ -433,7 +437,61 @@ if (args.join(" ") === "projects list --json") {
   }
 });
 
-test("update-all deep scan finds an unregistered owned project and dry-run never applies", { skip: process.platform === "win32" }, async () => {
+test("update-all treats each verified Pi profile as an isolated global target", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-pi-profiles-"));
+  const akHome = join(directory, "home", ".agentkit");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const fakePpm = join(directory, "ppm-fake.mjs");
+  const log = join(directory, "ak.log");
+  const agentDir = join(directory, "profiles", "pi-ak");
+  const sessionDir = join(agentDir, "sessions");
+  await writeFile(fakePpm, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ schemaVersion: 1, profiles: [{
+  id: "pi-ak", runtime: "pi",
+  agentDir: process.env.AK_HELPER_TEST_AGENT_DIR,
+  sessionDir: process.env.AK_HELPER_TEST_SESSION_DIR,
+  agentkitEnabled: true, managed: true, healthy: true,
+}] }));
+`, "utf8");
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify({
+  args,
+  agentDir: process.env.PI_CODING_AGENT_DIR || null,
+  sessionDir: process.env.PI_CODING_AGENT_SESSION_DIR || null,
+}) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+if (args.join(" ") === "projects list --json") {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "projects.list", data: { projects: [], total: 0 },
+  }));
+}
+`, "utf8");
+  await Promise.all([chmod(fakeAk, 0o755), chmod(fakePpm, 0o755)]);
+  try {
+    const result = await runCli(["update-all", "--channel", "stable", "--yes"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_PPM_BIN: fakePpm,
+      AK_HELPER_TEST_LOG: log,
+      AK_HELPER_TEST_AGENT_DIR: agentDir,
+      AK_HELPER_TEST_SESSION_DIR: sessionDir,
+      AGENTKIT_HOME: akHome,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Engineer Kit — pi profile: pi-ak/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    const updates = calls.filter(({ args }) => args[0] === "update");
+    assert.equal(updates.length, 2);
+    assert.deepEqual(updates.map(({ agentDir: value }) => value), [agentDir, agentDir]);
+    assert.deepEqual(updates.map(({ sessionDir: value }) => value), [sessionDir, sessionDir]);
+    assert.ok(updates.every(({ args }) => args.includes("--global") && args.includes("pi")));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("update-all deep scan finds an unregistered owned project and dry-run never applies", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-deep-scan-"));
   const scanRoot = join(directory, "projects");
   const project = join(scanRoot, "unregistered");
@@ -477,7 +535,7 @@ if (args.join(" ") === "projects list --json") {
   }
 });
 
-test("export delegates agy and portable without treating them as runtimes", { skip: process.platform === "win32" }, async () => {
+test("export delegates agy and portable without treating them as runtimes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-export-"));
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
@@ -520,7 +578,7 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
   }
 });
 
-test("global and binary-only updates work from the root directory", { skip: process.platform === "win32" }, async () => {
+test("global and binary-only updates work from the root directory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-binary-"));
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
@@ -563,7 +621,7 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
   }
 });
 
-test("non-interactive update fails clearly when saved install target is not updateable", { skip: process.platform === "win32" }, async () => {
+test("non-interactive update fails clearly when saved install target is not updateable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-config-update-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");

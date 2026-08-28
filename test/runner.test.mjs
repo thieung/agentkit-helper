@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requiresForceConsent, summarizeCommandFailure } from "../lib/runner.mjs";
+import { requiresForceConsent, spawnInvocation, summarizeCommandFailure } from "../lib/runner.mjs";
+
+test("runs JavaScript command shims through Node on Windows", () => {
+  assert.deepEqual(spawnInvocation("C:\\tools\\ppm.mjs", ["profiles", "list"], "win32"), {
+    binary: process.execPath,
+    args: ["C:\\tools\\ppm.mjs", "profiles", "list"],
+  });
+  assert.deepEqual(spawnInvocation("ak.exe", ["--version"], "win32"), {
+    binary: "ak.exe",
+    args: ["--version"],
+  });
+});
 
 test("extracts the main message from a JSON command error", () => {
   assert.equal(summarizeCommandFailure("", JSON.stringify({

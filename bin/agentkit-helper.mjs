@@ -17,6 +17,7 @@ import {
 import {
   exportArgs,
   formatCommand,
+  formatEnvironmentAssignments,
   globalUpdateApplyArgs,
   globalUpdatePreviewArgs,
   installArgs,
@@ -45,6 +46,12 @@ import {
 } from "../lib/github-issue.mjs";
 import { t } from "../lib/i18n.mjs";
 import { isUnsafeProjectPath, resolveProjectPath } from "../lib/project.mjs";
+import {
+  classifyPiProfiles,
+  parsePiProfileInventory,
+  piProfileManagerInvocation,
+  piProfileProcessOptions,
+} from "../lib/pi-profiles.mjs";
 import { BACK, walkSelections } from "../lib/navigation.mjs";
 import {
   ask,
@@ -78,11 +85,15 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const metadata = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
 const akBinary = process.env.AK_HELPER_AK_BIN || "ak";
 const ghBinary = process.env.AK_HELPER_GH_BIN || "gh";
+const piProfileManager = piProfileManagerInvocation(
+  process.env.AK_HELPER_PPM_BIN || "pi-profile-manager",
+);
 const installerUrl = "https://agentkit.best/install.sh";
 const windowsInstallerUrl = "https://agentkit.best/install.ps1";
 let activeLanguage = "en";
 let activeAction = null;
 let installedAkVersion = "";
+let binaryUpdateAvailable = false;
 
 function ui(key, values) {
   return t(activeLanguage, key, values);
@@ -172,38 +183,74 @@ Target groups:
 `);
 }
 
-function printPlan(args, cwd) {
+function printPlan(args, cwd, envOverrides = {}) {
   const suffix = cwd && cwd !== process.cwd() ? `  (cwd: ${cwd})` : "";
-  process.stdout.write(`${colorText(`  ${formatCommand(akBinary, args)}${suffix}`, "command")}\n`);
+  const environment = formatEnvironmentAssignments(envOverrides);
+  const prefix = environment ? `${environment} ` : "";
+  process.stdout.write(`${colorText(`  ${prefix}${formatCommand(akBinary, args)}${suffix}`, "command")}\n`);
 }
 
 function printSection(message) {
   process.stdout.write(`\n${colorText(message, "section")}\n`);
 }
 
-async function runAkCommand(args, { cwd = process.cwd() } = {}) {
+async function runAkCommand(
+  args,
+  { cwd = process.cwd(), envOverrides = {}, envUnset = [] } = {},
+) {
   const result = await withSpinner(
     ui("runningAkCommand"),
     ui("akCommandComplete"),
-    () => runCapture(akBinary, args, { cwd }),
+    () => runCapture(akBinary, args, { cwd, envOverrides, envUnset }),
   );
   if (result.stdout) process.stdout.write(`${result.stdout}\n`);
   if (result.stderr) process.stderr.write(`${result.stderr}\n`);
 }
 
+async function checkInteractiveBinaryUpdate() {
+  const channel = releaseChannelForVersion(installedAkVersion) || "stable";
+  try {
+    const result = await withSpinner(
+      ui("checkingBinaryUpdate"),
+      ui("checkedBinaryUpdate"),
+      () => runCapture(akBinary, selfUpdateJsonCheckArgs(channel)),
+    );
+    const check = parseSelfUpdateOutput(result.stdout);
+    const classification = classifySelfUpdate(check);
+    binaryUpdateAvailable = classification === "update";
+    if (binaryUpdateAvailable) {
+      warning(`│  ${ui("binaryUpdateAvailable", {
+        current: check.current_version,
+        latest: check.latest_version,
+        channel: check.channel || channel,
+      })}`);
+    } else if (classification === "current") {
+      process.stdout.write(`${colorText(`│  ${ui("binaryUpToDate", {
+        version: check.current_version,
+        channel: check.channel || channel,
+      })}`, "binary")}\n`);
+    } else {
+      warning(`│  ${ui("binaryUpdateStatusUnknown", { status: check.status })}`);
+    }
+  } catch (error) {
+    binaryUpdateAvailable = false;
+    warning(`│  ${ui("binaryUpdateCheckFailed", { message: error.message })}`);
+  }
+}
+
 async function chooseCommand(allowLanguageBack = false) {
   const choices = [
+    { label: ui("selfUpdateAction"), value: "self-update" },
     { label: ui("installAction"), value: "install" },
     { label: ui("updateAction"), value: "update" },
-    { label: ui("selfUpdateAction"), value: "self-update" },
     { label: ui("updateAllAction"), value: "update-all" },
     { label: ui("exportAction"), value: "export" },
     { label: ui("doctorAction"), value: "doctor" },
   ];
-  if (allowLanguageBack) {
-    choices.push({ label: ui("backToLanguage"), value: BACK });
-  }
-  return choose(ui("commandPrompt"), choices);
+  const defaultIndex = binaryUpdateAvailable ? 0 : 1;
+  return allowLanguageBack
+    ? chooseWithBack(ui("commandPrompt"), choices, defaultIndex, ui("escapeBack"))
+    : choose(ui("commandPrompt"), choices, defaultIndex);
 }
 
 function kitName(kit) {
@@ -231,7 +278,7 @@ async function selectLanguage(options, forcePrompt = false) {
 
 function chooseLocalized(allowBack, message, choices, defaultIndex = 0) {
   return allowBack
-    ? chooseWithBack(message, choices, defaultIndex, ui("back"))
+    ? chooseWithBack(message, choices, defaultIndex, ui("escapeBack"))
     : choose(message, choices, defaultIndex);
 }
 
@@ -331,8 +378,7 @@ async function selectTarget(
       disabled: true,
     });
   }
-  const configuredTargets = splitTargetSpec(config?.target).filter((target) => targets.has(target));
-  const initialValues = configuredTargets.length > 0 ? configuredTargets : ["codex"];
+  const initialValues = [];
   const selected = await (allowBack ? multiChooseWithBack : multiChoose)(
     ui(promptKey, promptValues),
     choices,
@@ -715,14 +761,14 @@ async function update(commandOptions, allowBack = false) {
 }
 
 function updateAllPreviewArgs(candidate, channel) {
-  if (candidate.kind === "global") {
+  if (candidate.kind === "global" || candidate.kind === "profile") {
     return globalUpdatePreviewArgs(channel, candidate.runtimes, candidate.kit);
   }
   return projectUpdatePreviewArgs(candidate.path, candidate.runtime, channel, candidate.kit);
 }
 
 function updateAllApplyArgs(candidate, channel) {
-  if (candidate.kind === "global") {
+  if (candidate.kind === "global" || candidate.kind === "profile") {
     return globalUpdateApplyArgs(channel, candidate.runtimes, candidate.kit);
   }
   return projectUpdateApplyArgs(candidate.path, candidate.runtime, channel, candidate.kit);
@@ -732,7 +778,12 @@ async function askDeepScanRoots() {
   return [await askDirectory(ui("deepScanRootsPrompt"), { root: homedir() })];
 }
 
-function buildUpdateCandidates(discovery, globalInstalls) {
+function buildUpdateCandidates(
+  discovery,
+  globalInstalls,
+  piProfiles = [],
+  claimedProfileRuntimes = new Set(),
+) {
   const projects = discovery.projects.flatMap((project) => project.installs.map(({ kit, runtime }) => ({
     ...project,
     id: `${project.id}:${kit}:${runtime}`,
@@ -745,16 +796,40 @@ function buildUpdateCandidates(discovery, globalInstalls) {
       kit: kitName(kit),
     }),
   })));
+  const profileCandidates = piProfiles.map((profile) => ({
+    id: `profile:${profile.runtime}:${profile.id}`,
+    kind: "profile",
+    kit: "engineer",
+    runtime: profile.runtime,
+    runtimes: [profile.runtime],
+    profile,
+    ...piProfileProcessOptions(profile),
+    label: ui("piProfileCandidate", {
+      profile: profile.id,
+      runtime: profile.runtime,
+    }),
+  }));
+  const ordinaryGlobalInstalls = globalInstalls
+    .map((install) => install.kit === "engineer"
+      ? {
+        ...install,
+        runtimes: install.runtimes.filter((runtime) => !claimedProfileRuntimes.has(runtime)),
+      }
+      : install)
+    .filter((install) => install.runtimes.length > 0);
   return {
     registered: projects.filter((project) => project.sources.includes("registry")),
     unregistered: projects.filter((project) => !project.sources.includes("registry")),
-    other: globalInstalls.map(({ kit, runtimes }) => ({
-      id: `global:${kit}`,
-      kind: "global",
-      kit,
-      runtimes,
-      label: ui("globalCandidate", { kit: kitName(kit), runtimes: runtimes.join(", ") }),
-    })),
+    other: [
+      ...profileCandidates,
+      ...ordinaryGlobalInstalls.map(({ kit, runtimes }) => ({
+        id: `global:${kit}`,
+        kind: "global",
+        kit,
+        runtimes,
+        label: ui("globalCandidate", { kit: kitName(kit), runtimes: runtimes.join(", ") }),
+      })),
+    ],
   };
 }
 
@@ -779,7 +854,7 @@ function printUpdateInventory(groups) {
 }
 
 function orderUpdateCandidates(candidates) {
-  const priority = { global: 0, project: 1 };
+  const priority = { profile: 0, global: 1, project: 2 };
   return [...candidates].sort((left, right) => priority[left.kind] - priority[right.kind]);
 }
 
@@ -804,7 +879,46 @@ async function loadUpdateInventory(commandOptions, deepScanRoots) {
     supportedRuntimes: UPDATE_TARGETS,
     kits: KITS,
   });
-  return { discovery, groups: buildUpdateCandidates(discovery, globalInstalls) };
+  const profileRuntimeInstalls = new Set(globalInstalls
+    .filter((install) => install.kit === "engineer")
+    .flatMap((install) => install.runtimes)
+    .filter((runtime) => runtime === "pi" || runtime === "omp"));
+  let updateableProfiles = [];
+  const claimedProfileRuntimes = new Set();
+  try {
+    const inventory = await runCapture(piProfileManager.binary, [
+      ...piProfileManager.prefixArgs,
+      "profiles", "list", "--json",
+    ]);
+    const profiles = parsePiProfileInventory(inventory.stdout);
+    for (const profile of profiles.filter((profile) => profile.agentkitEnabled)) {
+      claimedProfileRuntimes.add(profile.runtime);
+    }
+    const classified = classifyPiProfiles(profiles);
+    updateableProfiles = classified.updateable;
+    for (const profile of classified.skipped) {
+      discovery.warnings.push(ui("piProfileSkipped", {
+        profile: profile.id,
+        reason: !profile.agentkitEnabled
+          ? ui("piProfileNoAgentKit")
+          : ui("piProfileNotSafe"),
+      }));
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      for (const runtime of profileRuntimeInstalls) claimedProfileRuntimes.add(runtime);
+      discovery.warnings.push(ui("piProfileDiscoveryUnavailable", { message: error.message }));
+    }
+  }
+  return {
+    discovery,
+    groups: buildUpdateCandidates(
+      discovery,
+      globalInstalls,
+      updateableProfiles,
+      claimedProfileRuntimes,
+    ),
+  };
 }
 
 async function updateAll(commandOptions, allowBack = false) {
@@ -847,8 +961,9 @@ async function updateAll(commandOptions, allowBack = false) {
           { label: ui("chooseUpdates"), value: "choose" },
           { label: ui("customDeepScanAction"), value: "custom-deep-scan" },
         ];
-        if (allowBack) actionChoices.push({ label: ui("updateAllBack"), value: BACK });
-        const action = await choose(ui("selectUpdateAll"), actionChoices);
+        const action = allowBack
+          ? await chooseWithBack(ui("selectUpdateAll"), actionChoices, 0, ui("escapeBack"))
+          : await choose(ui("selectUpdateAll"), actionChoices);
         if (action === BACK) break;
         if (action === "custom-deep-scan") {
           scanBaselinePaths = new Set(projectCandidates.map((candidate) => candidate.path));
@@ -871,10 +986,12 @@ async function updateAll(commandOptions, allowBack = false) {
           ui("backFromTargetSelection"),
         );
         if (ids === BACK) continue;
-        const selectedAction = await choose(ui("confirmSelectedUpdates", { count: ids.length }), [
-          { label: ui("previewSelectedUpdates", { count: ids.length }), value: "continue" },
-          { label: ui("back"), value: BACK },
-        ]);
+        const selectedAction = await chooseWithBack(
+          ui("confirmSelectedUpdates", { count: ids.length }),
+          [{ label: ui("previewSelectedUpdates", { count: ids.length }), value: "continue" }],
+          0,
+          ui("escapeBack"),
+        );
         if (selectedAction === BACK) continue;
         selected = candidates.filter((candidate) => ids.includes(candidate.id));
       }
@@ -884,7 +1001,7 @@ async function updateAll(commandOptions, allowBack = false) {
     if (!selected) continue;
     if (selected.length === 0) throw new Error(ui("noUpdateCandidates"));
     selected = orderUpdateCandidates(selected);
-    if (selected.some((candidate) => candidate.kind === "global")) {
+    if (selected.some((candidate) => candidate.kind === "global" || candidate.kind === "profile")) {
       warning(ui("globalUpdateSafety"));
     }
     if (channel === "beta" && selected.length > 0) {
@@ -895,10 +1012,12 @@ async function updateAll(commandOptions, allowBack = false) {
     printSection(ui("updateAllPreview"));
     for (const candidate of selected) {
       process.stdout.write(`\n${colorText(candidate.label, "target")}\n`);
-      await runAkCommand(updateAllPreviewArgs(candidate, channel));
+      await runAkCommand(updateAllPreviewArgs(candidate, channel), candidate);
     }
     printSection(ui("updateAllApplyPlan"));
-    for (const candidate of selected) printPlan(updateAllApplyArgs(candidate, channel));
+    for (const candidate of selected) {
+      printPlan(updateAllApplyArgs(candidate, channel), null, candidate.envOverrides);
+    }
     if (commandOptions.dryRun) {
       process.stdout.write(`\n${ui("dryRunFiles")}\n`);
       return;
@@ -913,7 +1032,7 @@ async function updateAll(commandOptions, allowBack = false) {
         total: selected.length,
         label: candidate.label,
       })}\n`);
-      await runAkCommand(updateAllApplyArgs(candidate, channel));
+      await runAkCommand(updateAllApplyArgs(candidate, channel), candidate);
     }
     process.stdout.write(`${ui("updateAllComplete")}\n`);
     return;
@@ -1006,7 +1125,10 @@ async function main() {
   const interactiveRoot = !options.command;
   const languageCanChange = interactiveRoot && !options.language;
   installedAkVersion = await ensureAk(akBinary);
-  if (interactiveRoot) showCurrentBinary();
+  if (interactiveRoot) {
+    showCurrentBinary();
+    await checkInteractiveBinaryUpdate();
+  }
   while (true) {
     if (!options.command) {
       const command = await chooseCommand(languageCanChange);

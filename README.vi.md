@@ -27,7 +27,7 @@ Trong TUI, dùng:
 - ↑/↓ để di chuyển
 - Space để chọn nhiều runtime
 - Enter để xác nhận
-- `← Quay lại` để trở về bước trước
+- Esc để trở về bước trước
 
 Bạn chỉ cần chọn scope project hoặc user/global, Engineer hoặc Marketing Kit,
 một hay nhiều runtime và release channel Stable hoặc Beta. AgentKit vẫn quản
@@ -37,6 +37,11 @@ Khi cài global scope, helper chạy trước mà không có `--force`. Nếu ta
 tồn tại hoặc có drift, TUI hiển thị WARNING và hỏi consent riêng, mặc định No.
 Chỉ khi chọn Yes, helper mới retry bằng `--force`. Global update luôn dùng
 preserve-only: file do user chỉnh sửa được bỏ qua và helper không thêm `--force`.
+
+Trạng thái platform: macOS đã được verify local. Linux là target được hỗ trợ
+qua code path Node.js portable. Native Windows PowerShell đang ở mức
+experimental cho đến khi được smoke-test trên máy thật; repository đã có xử lý
+command và CI dành cho Windows nhưng chưa claim provider-backed E2E.
 
 <details>
 <summary><strong>Cách dùng CLI nâng cao</strong></summary>

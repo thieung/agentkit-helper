@@ -28,7 +28,7 @@ In the TUI, use:
 - ↑/↓ to navigate
 - Space to select multiple runtimes
 - Enter to confirm
-- `← Back` to return to the previous step
+- Esc to return to the previous step
 
 Choose a project or user/global scope, Engineer or Marketing Kit, one or more
 runtimes, and the Stable or Beta channel. AgentKit remains responsible for Kit
@@ -39,6 +39,12 @@ already exists or drift is detected, the TUI shows a WARNING and asks for
 separate consent, defaulting to No. It retries with `--force` only after you
 choose Yes. Global update is preserve-only: user-modified files are skipped
 and the helper never adds `--force`.
+
+Platform status: macOS is verified locally. Linux is a supported target for the
+portable Node.js path. Native Windows PowerShell support is experimental until
+it passes a real-machine smoke test; the repository includes Windows-oriented
+command handling and CI coverage, but does not yet claim provider-backed E2E
+verification.
 
 <details>
 <summary><strong>Advanced CLI usage</strong></summary>

@@ -5,6 +5,7 @@ import {
   formatCommand,
   globalUpdateApplyArgs,
   globalUpdatePreviewArgs,
+  formatEnvironmentAssignments,
   installArgs,
   projectUpdateApplyArgs,
   projectUpdatePreviewArgs,
@@ -92,4 +93,13 @@ test("builds preview and apply commands for one project route", () => {
   assert.deepEqual(updatePreviewArgs(selection).slice(-3), ["--show-diff", "--dry-run", "--verbose"]);
   assert.deepEqual(updateApplyArgs(selection).slice(-2), ["--yes", "--verbose"]);
   assert.match(formatCommand("ak", updateApplyArgs(selection)), /'\/tmp\/project with spaces'/);
+});
+
+test("formats command plans and environment overrides for PowerShell", () => {
+  assert.equal(formatCommand("ak", ["update", "C:\\work folder", "--yes"], {
+    platform: "win32",
+  }), "ak update 'C:\\work folder' --yes");
+  assert.equal(formatEnvironmentAssignments({
+    PI_CODING_AGENT_DIR: "C:\\Users\\Me\\Pi Profile",
+  }, { platform: "win32" }), "$env:PI_CODING_AGENT_DIR = 'C:\\Users\\Me\\Pi Profile';");
 });
