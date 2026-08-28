@@ -1,6 +1,6 @@
 {
   "name": "@thieung/agentkit-helper",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Community helper for installing and updating AgentKit kits by runtime and channel",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
   "files": [
     "bin/",
     "lib/",
+    "scripts/",
     "assets/",
     "README.md",
     "README.vi.md",
@@ -17,7 +18,7 @@
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
-    "check": "node --check bin/agentkit-helper.mjs && node --check lib/*.mjs"
+    "check": "node scripts/check.mjs"
   },
   "engines": {
     "node": ">=20.12"
