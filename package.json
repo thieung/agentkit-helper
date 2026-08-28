@@ -1,0 +1,48 @@
+{
+  "name": "@thieung/agentkit-helper",
+  "version": "0.1.0",
+  "description": "Community helper for installing and updating AgentKit kits by runtime and channel",
+  "type": "module",
+  "bin": {
+    "agentkit-helper": "bin/agentkit-helper.mjs",
+    "akh": "bin/agentkit-helper.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "assets/",
+    "README.md",
+    "README.vi.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "check": "node --check bin/agentkit-helper.mjs && node --check lib/*.mjs"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "keywords": [
+    "agentkit",
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "author": "Thieu Nguyen",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thieung/agentkit-helper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thieung/agentkit-helper/issues"
+  },
+  "homepage": "https://github.com/thieung/agentkit-helper#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0"
+  }
+}

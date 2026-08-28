@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title description">
+  <title id="title">AgentKit Helper interactive terminal</title>
+  <desc id="description">AgentKit Helper showing the installed ak binary and its main action menu in English.</desc>
+  <rect width="1200" height="650" rx="18" fill="#18181b"/>
+  <rect x="1" y="1" width="1198" height="648" rx="17" fill="none" stroke="#3f3f46" stroke-width="2"/>
+  <circle cx="32" cy="30" r="7" fill="#ff5f57"/>
+  <circle cx="56" cy="30" r="7" fill="#febc2e"/>
+  <circle cx="80" cy="30" r="7" fill="#28c840"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="25">
+    <text x="30" y="88" fill="#f4f4f5">┌  AgentKit Helper</text>
+    <text x="30" y="128" fill="#71717a">│</text>
+    <text x="30" y="168" fill="#7dd3fc">◇</text>
+    <text x="72" y="168" fill="#a7f3d0" font-weight="700">Choose interface language / Chọn ngôn ngữ giao diện</text>
+    <text x="30" y="208" fill="#71717a">│</text>
+    <text x="72" y="208" fill="#e4e4e7">English</text>
+    <rect x="58" y="226" width="510" height="48" rx="8" fill="#27272a"/>
+    <text x="72" y="258" fill="#fbbf24" font-weight="700">Current ak binary: 2.14.0 (stable)</text>
+    <text x="30" y="310" fill="#71717a">│</text>
+    <text x="30" y="350" fill="#7dd3fc">◆</text>
+    <text x="72" y="350" fill="#a7f3d0" font-weight="700">What do you want to do?</text>
+    <text x="30" y="392" fill="#71717a">│</text>
+    <circle cx="82" cy="387" r="9" fill="#86efac"/>
+    <text x="108" y="396" fill="#fafafa">Install a Kit</text>
+    <text x="72" y="438" fill="#71717a">○</text>
+    <text x="108" y="438" fill="#d4d4d8">Update a Kit</text>
+    <text x="72" y="480" fill="#71717a">○</text>
+    <text x="108" y="480" fill="#d4d4d8">Update all detected AgentKit installs</text>
+    <text x="72" y="522" fill="#71717a">○</text>
+    <text x="108" y="522" fill="#d4d4d8">Run health checks</text>
+    <text x="30" y="572" fill="#71717a">│</text>
+    <text x="72" y="572" fill="#a1a1aa">↑/↓ to navigate • Enter: confirm</text>
+    <text x="30" y="618" fill="#71717a">└</text>
+  </g>
+</svg>
