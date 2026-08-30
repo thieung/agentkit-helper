@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import {
   classifyPiProfiles,
   defaultProfileProcessOptions,
@@ -76,17 +77,22 @@ test("uses the managed Node payload instead of the Windows cmd launcher", () => 
 });
 
 test("materializes helper profile aliases onto isolated Pi/OMP homes", () => {
-  assert.deepEqual(defaultProfileProcessOptions("pi-ak", { home: "/home/me" }), {
+  const home = join("home", "me");
+  const piAk = join(home, ".pi", "profiles", "pi-ak");
+  assert.deepEqual(defaultProfileProcessOptions("pi-ak", { home }), {
     envOverrides: {
-      PI_CODING_AGENT_DIR: "/home/me/.pi/profiles/pi-ak",
-      PI_CODING_AGENT_SESSION_DIR: "/home/me/.pi/profiles/pi-ak/sessions",
+      PI_CODING_AGENT_DIR: piAk,
+      PI_CODING_AGENT_SESSION_DIR: join(piAk, "sessions"),
     },
     envUnset: ["AGENTKIT_OMP_HOME", "OMP_HOME"],
   });
   const job = materializeHelperTarget({
     global: true, target: "pi-omp", channel: "beta",
-  }, [], { home: "/home/me" });
+  }, [], { home });
   assert.equal(job.helperTarget, "pi-omp");
   assert.equal(job.target, "omp");
-  assert.equal(job.envOverrides.AGENTKIT_OMP_HOME, "/home/me/.omp/profiles/pi-omp/agent");
+  assert.equal(
+    job.envOverrides.AGENTKIT_OMP_HOME,
+    join(home, ".omp", "profiles", "pi-omp", "agent"),
+  );
 });
