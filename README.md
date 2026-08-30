@@ -91,9 +91,11 @@ akh update --project /path/to/project --dry-run
 
 Targets:
 
-- Install: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`
-- Update: `claude-code`, `codex`, `cursor`, `grok`, `omp`, `pi`
+- Install: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
+- Update: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
 - Export: `agy`, `portable`
+
+`dsh` updates use `ak kit refresh` because remote `ak update` still rejects that runtime. `pi-ak` and `pi-omp` are global-only profile aliases (`--global`); they install/update into the custom Pi/OMP homes instead of the default `pi`/`omp` directories.
 
 Run `akh --help` for every command and option.
 

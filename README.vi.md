@@ -88,9 +88,11 @@ akh update --project /path/to/project --dry-run
 
 Các target:
 
-- Cài đặt: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`
-- Cập nhật: `claude-code`, `codex`, `cursor`, `grok`, `omp`, `pi`
+- Cài đặt: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
+- Cập nhật: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
 - Export: `agy`, `portable`
+
+Update `dsh` đi qua `ak kit refresh` vì `ak update` remote vẫn reject runtime này. `pi-ak` và `pi-omp` là alias profile chỉ dùng với `--global`; chúng cài/cập nhật vào home Pi/OMP custom, không phải thư mục `pi`/`omp` mặc định.
 
 Chạy `akh --help` để xem toàn bộ command và option.
 
