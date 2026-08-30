@@ -8,7 +8,8 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.equal(t("vi", "marketingKit"), "Marketing Kit");
   assert.match(t("vi", "targetPrompt", { kit: "Marketing Kit" }), /Marketing Kit/);
   assert.equal(t("vi", "allRuntimes"), "Tất cả runtime được hỗ trợ");
-  assert.match(t("vi", "dshUpdateUnsupported"), /chưa hỗ trợ/);
+  assert.match(t("vi", "piAkProfile"), /pi-ak/);
+  assert.match(t("vi", "profileTargetsNeedGlobal"), /--global/);
   assert.equal(t("en", "selfUpdateAction"), "Update ak binary");
   assert.equal(t("vi", "currentBinary", {
     version: "2.14.0", channel: "stable",

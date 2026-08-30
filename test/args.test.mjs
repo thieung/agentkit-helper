@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   EXPORT_TARGETS,
+  HELPER_INSTALL_TARGETS,
+  HELPER_UPDATE_TARGETS,
   INSTALL_TARGETS,
+  PROFILE_TARGETS,
   RUNTIME_TARGETS,
   parseArgs,
   UPDATE_TARGETS,
@@ -12,11 +15,14 @@ test("publishes distinct capability groups", () => {
   assert.deepEqual([...INSTALL_TARGETS], [
     "claude-code", "codex", "cursor", "dsh", "grok", "omp", "pi",
   ]);
-  assert.deepEqual([...UPDATE_TARGETS], ["claude-code", "codex", "cursor", "grok", "omp", "pi"]);
-  assert.deepEqual([...EXPORT_TARGETS], ["agy", "portable"]);
-  assert.deepEqual([...RUNTIME_TARGETS], [
+  assert.deepEqual([...UPDATE_TARGETS], [
     "claude-code", "codex", "cursor", "dsh", "grok", "omp", "pi",
   ]);
+  assert.deepEqual([...PROFILE_TARGETS], ["pi-ak", "pi-omp"]);
+  assert.deepEqual([...EXPORT_TARGETS], ["agy", "portable"]);
+  assert.deepEqual([...RUNTIME_TARGETS], [...HELPER_INSTALL_TARGETS]);
+  assert.equal(HELPER_UPDATE_TARGETS.has("dsh"), true);
+  assert.equal(HELPER_UPDATE_TARGETS.has("pi-ak"), true);
   assert.equal(RUNTIME_TARGETS.has("agy"), false);
   assert.equal(RUNTIME_TARGETS.has("portable"), false);
 });
@@ -74,7 +80,8 @@ test("uses separate install and update target matrices", () => {
   assert.equal(parseArgs(["install", "--runtime", "pi"]).runtime, "pi");
   assert.equal(parseArgs(["update", "--target", "omp"]).target, "omp");
   assert.equal(parseArgs(["update", "--target", "pi"]).target, "pi");
-  assert.throws(() => parseArgs(["update", "--target", "dsh"]), /not supported by ak update/);
+  assert.equal(parseArgs(["update", "--target", "dsh"]).target, "dsh");
+  assert.equal(parseArgs(["install", "--global", "--target", "pi-ak"]).target, "pi-ak");
   assert.throws(() => parseArgs(["install", "--target", "portable"]), /export-only/);
   assert.throws(() => parseArgs(["install", "--runtime", "portable"]), /export-only/);
   assert.throws(() => parseArgs(["install", "--target", "unknown"]), /unsupported target/);
@@ -84,10 +91,7 @@ test("uses separate install and update target matrices", () => {
 test("accepts comma-separated runtime selections", () => {
   assert.equal(parseArgs(["install", "--target", "codex,cursor"]).target, "codex,cursor");
   assert.equal(parseArgs(["update", "--runtime", "grok,pi"]).runtime, "grok,pi");
-  assert.throws(
-    () => parseArgs(["update", "--target", "codex,dsh"]),
-    /not supported by ak update/,
-  );
+  assert.equal(parseArgs(["update", "--target", "codex,dsh"]).target, "codex,dsh");
   assert.throws(
     () => parseArgs(["export", "--target", "agy,portable", "--global"]),
     /install runtime/,
@@ -188,6 +192,20 @@ test("supports a dedicated self-update command and preserves binary-only", () =>
     () => parseArgs(["install", "--allow-downgrade"]),
     /valid only with self-update/,
   );
+});
+
+test("rejects custom Pi profiles on project scope", () => {
+  assert.throws(
+    () => parseArgs(["install", "--project", "/tmp/demo", "--target", "pi-ak"]),
+    /global profile targets/,
+  );
+  assert.throws(
+    () => parseArgs(["update", "--project", "/tmp/demo", "--target", "pi-omp"]),
+    /global profile targets/,
+  );
+  assert.equal(parseArgs([
+    "update", "--global", "--target", "pi-ak,pi-omp",
+  ]).target, "pi-ak,pi-omp");
 });
 
 test("accepts Marketing Kit for Kit operations", () => {

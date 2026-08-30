@@ -7,10 +7,14 @@ import {
   globalUpdatePreviewArgs,
   formatEnvironmentAssignments,
   installArgs,
+  kitRefreshArgs,
   projectUpdateApplyArgs,
   projectUpdatePreviewArgs,
+  splitRuntimesForUpdate,
   updateApplyArgs,
+  updateApplyArgsForRuntime,
   updatePreviewArgs,
+  updatePreviewArgsForRuntime,
 } from "../lib/commands.mjs";
 
 test("builds export commands separately from runtime installs", () => {
@@ -102,4 +106,25 @@ test("formats command plans and environment overrides for PowerShell", () => {
   assert.equal(formatEnvironmentAssignments({
     PI_CODING_AGENT_DIR: "C:\\Users\\Me\\Pi Profile",
   }, { platform: "win32" }), "$env:PI_CODING_AGENT_DIR = 'C:\\Users\\Me\\Pi Profile';");
+});
+
+test("routes dsh updates through kit refresh instead of ak update", () => {
+  const project = {
+    global: false, project: "/tmp/demo", target: "dsh", channel: "beta", kit: "engineer",
+  };
+  const global = {
+    global: true, project: null, target: "dsh", channel: "stable", kit: "engineer",
+  };
+  assert.equal(updatePreviewArgsForRuntime(project), null);
+  assert.deepEqual(updateApplyArgsForRuntime(project), [
+    "kit", "refresh", "engineer", "--target", "dsh", "--channel", "beta", "--yes", "--verbose",
+  ]);
+  assert.deepEqual(kitRefreshArgs(global), [
+    "kit", "refresh", "engineer", "--target", "dsh", "--global", "--channel", "stable",
+    "--yes", "--verbose",
+  ]);
+  assert.deepEqual(splitRuntimesForUpdate(["codex", "dsh", "pi"]), {
+    update: ["codex", "pi"],
+    refresh: ["dsh"],
+  });
 });

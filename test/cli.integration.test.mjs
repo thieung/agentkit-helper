@@ -710,7 +710,7 @@ if (args.includes("--json")) {
   }
 });
 
-test("non-interactive update fails clearly when saved install target is not updateable", async () => {
+test("saved project dsh updates through kit refresh", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-config-update-"));
   const project = join(directory, "project");
   const fakeAk = join(directory, "ak-fake.mjs");
@@ -725,7 +725,15 @@ test("non-interactive update fails clearly when saved install target is not upda
   }), "utf8");
   await writeFile(fakeAk, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
-appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.15.0-beta.6\\n");
+if (args.includes("--json")) process.stdout.write(JSON.stringify({
+  schema_version: 1, kind: "self_update", data: {
+    available: false, status: "current", current_version: "2.15.0-beta.6",
+    latest_version: "2.15.0-beta.6", channel: "beta", applied: false,
+  },
+}));
 `, "utf8");
   await chmod(fakeAk, 0o755);
 
@@ -733,12 +741,70 @@ appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(process.argv.slice
     const result = await runCli([
       "update", "--project", project, "--yes",
     ], { AK_HELPER_AK_BIN: fakeAk, AK_HELPER_TEST_LOG: log });
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /Saved project target dsh is install-only/);
-    assert.match(result.stderr, /claude-code, codex, cursor, grok, omp, pi/);
-
+    assert.equal(result.code, 0, result.stderr);
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
-    assert.deepEqual(calls, [["--version"]]);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
+      ["kit", "refresh", "engineer", "--target", "dsh", "--channel", "beta", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("global dsh updates through kit refresh", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-dsh-global-"));
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "update", "--global", "--target", "dsh", "--channel", "stable", "--yes",
+    ], { AK_HELPER_AK_BIN: fakeAk, AK_HELPER_TEST_LOG: log });
+    assert.equal(result.code, 0, result.stderr);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["kit", "refresh", "engineer", "--target", "dsh", "--global", "--channel", "stable", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("global pi-ak install isolates the Pi profile home", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-pi-ak-install-"));
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify({
+  args,
+  agentDir: process.env.PI_CODING_AGENT_DIR || null,
+}) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "install", "--global", "--target", "pi-ak", "--channel", "stable", "--yes",
+    ], { AK_HELPER_AK_BIN: fakeAk, AK_HELPER_TEST_LOG: log });
+    assert.equal(result.code, 0, result.stderr);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    const installs = calls.filter(({ args }) => args[0] === "kit");
+    assert.equal(installs.length, 1);
+    assert.deepEqual(installs[0].args, [
+      "kit", "install", "engineer", "--target", "pi", "--global", "--channel", "stable", "--yes", "--verbose",
+    ]);
+    assert.match(installs[0].agentDir, /pi-ak$/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
