@@ -31,8 +31,11 @@ In the TUI, use:
 - Esc to return to the previous step
 
 Choose a project or user/global scope, Engineer or Marketing Kit, one or more
-runtimes, and the Stable or Beta channel. AgentKit remains responsible for Kit
-verification, ownership, snapshots, and runtime-specific files.
+runtimes, and the Stable or Beta channel. When the current directory is a safe
+project path (not `/` or your home directory), the TUI offers **Use current
+project**; the equivalent CLI flag is `--project .`. AgentKit remains
+responsible for Kit verification, ownership, snapshots, and runtime-specific
+files.
 
 For global install, the helper first runs without `--force`. If the target
 already exists or drift is detected, the TUI shows a WARNING and asks for
@@ -45,6 +48,15 @@ portable Node.js path. Native Windows PowerShell support is experimental until
 it passes a real-machine smoke test; the repository includes Windows-oriented
 command handling and CI coverage, but does not yet claim provider-backed E2E
 verification.
+
+Windows smoke checklist (manual; keep experimental until this passes on a real
+machine):
+
+1. Install `ak` with `irm https://agentkit.best/install.ps1 | iex`, then open a
+   new terminal.
+2. Run `npx --yes @thieung/agentkit-helper` (or `akh` after a global npm install).
+3. In the TUI, choose **Use current project** (or `akh install --project .`).
+4. Install one runtime, then run `update-all` for that install.
 
 <details>
 <summary><strong>Advanced CLI usage</strong></summary>

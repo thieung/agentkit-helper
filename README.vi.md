@@ -30,8 +30,10 @@ Trong TUI, dùng:
 - Esc để trở về bước trước
 
 Bạn chỉ cần chọn scope project hoặc user/global, Engineer hoặc Marketing Kit,
-một hay nhiều runtime và release channel Stable hoặc Beta. AgentKit vẫn quản
-lý việc xác minh Kit, ownership, snapshot và file riêng của từng runtime.
+một hay nhiều runtime và release channel Stable hoặc Beta. Khi thư mục hiện tại
+là project hợp lệ (không phải `/` hay home), TUI có **Dùng project hiện tại**;
+CLI tương đương là `--project .`. AgentKit vẫn quản lý việc xác minh Kit,
+ownership, snapshot và file riêng của từng runtime.
 
 Khi cài global scope, helper chạy trước mà không có `--force`. Nếu target đã
 tồn tại hoặc có drift, TUI hiển thị WARNING và hỏi consent riêng, mặc định No.
@@ -42,6 +44,16 @@ Trạng thái platform: macOS đã được verify local. Linux là target đư�
 qua code path Node.js portable. Native Windows PowerShell đang ở mức
 experimental cho đến khi được smoke-test trên máy thật; repository đã có xử lý
 command và CI dành cho Windows nhưng chưa claim provider-backed E2E.
+
+Checklist smoke Windows (thủ công; giữ experimental cho đến khi chạy xong trên
+máy thật):
+
+1. Cài `ak` bằng `irm https://agentkit.best/install.ps1 | iex`, rồi mở terminal
+   mới.
+2. Chạy `npx --yes @thieung/agentkit-helper` (hoặc `akh` sau khi npm install
+   global).
+3. Trong TUI, chọn **Dùng project hiện tại** (hoặc `akh install --project .`).
+4. Cài một runtime, rồi chạy `update-all` cho install đó.
 
 <details>
 <summary><strong>Cách dùng CLI nâng cao</strong></summary>

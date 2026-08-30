@@ -105,12 +105,15 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
       ["kit", "install", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
       ["projects", "add", canonicalProject, "--yes"],
       ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
       ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
       ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["kit", "install", "marketing", "--target", "cursor", "--channel", "beta", "--yes", "--verbose"],
       ["projects", "add", canonicalProject, "--yes"],
       ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["update", canonicalProject, "--kits", "marketing", "--target", "cursor", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
       ["update", canonicalProject, "--kits", "marketing", "--target", "cursor", "--channel", "beta", "--yes", "--verbose"],
     ]);
@@ -396,6 +399,16 @@ test("update-all inventories global and registered Kit installs before sequentia
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.15.0-beta.5\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: false, status: "current",
+      current_version: "2.15.0-beta.5", latest_version: "2.15.0-beta.5",
+      channel: "beta", applied: false,
+    },
+  }));
+}
 if (args.join(" ") === "projects list --json") {
   process.stdout.write(JSON.stringify({
     schema_version: 1,
@@ -423,6 +436,7 @@ if (args.join(" ") === "projects list --json") {
     assert.deepEqual(calls, [
       ["--version"],
       ["projects", "list", "--json"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["update", "--global", "--kits", "engineer", "--target", "cursor", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
       ["update", "--global", "--kits", "marketing", "--target", "grok", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
       ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
@@ -431,6 +445,71 @@ if (args.join(" ") === "projects list --json") {
       ["update", "--global", "--kits", "marketing", "--target", "grok", "--channel", "beta", "--yes", "--verbose"],
       ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
       ["update", canonicalProject, "--kits", "marketing", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("update-all upgrades an already-beta ak before Kit previews", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-stale-beta-"));
+  const project = join(directory, "project");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const state = join(directory, "ak-version");
+  const manifest = join(
+    project, ".agentkit", "adapters", "claude-code", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(dirname(manifest), { recursive: true }));
+  await writeFile(join(project, ".agentkit", "ownership.json"), '{"version":1,"project_id":"demo"}\n');
+  await writeFile(manifest, '{"version":1,"kit":"engineer"}\n');
+  const canonicalProject = await realpath(project);
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+const current = existsSync(process.env.AK_HELPER_TEST_STATE) ? "2.15.0-beta.5" : "2.13.0-beta.12";
+if (args[0] === "--version") process.stdout.write("ak " + current + "\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  if (!args.includes("--check")) writeFileSync(process.env.AK_HELPER_TEST_STATE, "2.15.0-beta.5\\n");
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: args.includes("--check") && current !== "2.15.0-beta.5",
+      status: args.includes("--check") && current !== "2.15.0-beta.5" ? "update-available" : "current",
+      current_version: current, latest_version: "2.15.0-beta.5", channel: "beta",
+      applied: !args.includes("--check"),
+    },
+  }));
+}
+if (args.join(" ") === "projects list --json") {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "projects.list",
+    data: { projects: [{ name: "demo", dir: process.env.AK_HELPER_TEST_PROJECT }], total: 1 },
+  }));
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "update-all", "--channel", "beta", "--yes",
+    ], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AK_HELPER_TEST_STATE: state,
+      AK_HELPER_TEST_PROJECT: project,
+      AGENTKIT_HOME: join(directory, "empty-home", ".agentkit"),
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Binary prerequisite complete/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["projects", "list", "--json"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
+      ["self-update", "--channel", "beta", "--yes", "--json"],
+      ["--version"],
+      ["update", canonicalProject, "--kits", "engineer", "--target", "claude-code", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
+      ["update", canonicalProject, "--kits", "engineer", "--target", "claude-code", "--channel", "beta", "--yes", "--verbose"],
     ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -544,11 +623,12 @@ test("export delegates agy and portable without treating them as runtimes", asyn
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.15.0-beta.5\\n");
 if (args.includes("--json")) process.stdout.write(JSON.stringify({
   schema_version: 1, kind: "self_update", data: {
-    available: args.includes("--check"), status: args.includes("--check") ? "update-available" : "current",
-    current_version: "2.13.0", latest_version: "2.14.0", channel: "stable",
-    applied: !args.includes("--check"),
+    available: false, status: "current",
+    current_version: "2.15.0-beta.5", latest_version: "2.15.0-beta.5",
+    channel: "beta", applied: false,
   },
 }));
 `, "utf8");
@@ -569,6 +649,7 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
     assert.deepEqual(calls, [
       ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["kit", "install", "engineer", "--target", "agy", "--global", "--channel", "beta", "--yes", "--verbose"],
       ["--version"],
       ["kit", "install", "engineer", "--target", "portable", "--out", out, "--channel", "stable", "--yes", "--verbose"],
@@ -586,13 +667,20 @@ test("global and binary-only updates work from the root directory", async () => 
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
 appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
-if (args.includes("--json")) process.stdout.write(JSON.stringify({
-  schema_version: 1, kind: "self_update", data: {
-    available: args.includes("--check"), status: args.includes("--check") ? "update-available" : "current",
-    current_version: "2.13.0", latest_version: "2.14.0", channel: "stable",
-    applied: !args.includes("--check"),
-  },
-}));
+if (args[0] === "--version") process.stdout.write("ak 2.15.0-beta.5\\n");
+if (args.includes("--json")) {
+  const beta = args.includes("beta");
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: args.includes("--check") && !beta,
+      status: args.includes("--check") && !beta ? "update-available" : "current",
+      current_version: "2.15.0-beta.5",
+      latest_version: beta ? "2.15.0-beta.5" : "2.14.0",
+      channel: beta ? "beta" : "stable",
+      applied: !args.includes("--check"),
+    },
+  }));
+}
 `, "utf8");
   await chmod(fakeAk, 0o755);
 
@@ -610,6 +698,7 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
     assert.deepEqual(calls, [
       ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
       ["update", "--global", "--kits", "engineer", "--target", "codex", "--channel", "beta", "--show-diff", "--dry-run", "--verbose"],
       ["update", "--global", "--kits", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
       ["--version"],

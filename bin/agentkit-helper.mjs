@@ -415,10 +415,6 @@ function warnBetaLifecycle(channel) {
 }
 
 async function prepareBetaBinary(commandOptions, { requiresPreview = false } = {}) {
-  const currentVersion = installedAkVersion.replace(/^ak\s+/i, "");
-  if (!currentVersion || currentVersion.includes("-")) {
-    return { proceed: true, updated: false };
-  }
   warnBetaLifecycle("beta");
   const check = parseSelfUpdateOutput((await runCapture(
     akBinary, selfUpdateJsonCheckArgs("beta"),
