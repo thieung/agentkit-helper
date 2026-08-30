@@ -6,9 +6,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   EXPORT_TARGETS,
-  INSTALL_TARGETS,
+  helperRuntimeTargets,
   KITS,
   parseArgs,
+  specHasProfileTarget,
   splitTargetSpec,
   targetSpecIsSupported,
   UPDATE_TARGETS,
@@ -21,14 +22,17 @@ import {
   globalUpdateApplyArgs,
   globalUpdatePreviewArgs,
   installArgs,
+  kitRefreshArgs,
   projectUpdateApplyArgs,
   projectUpdatePreviewArgs,
   selfUpdateCheckArgs,
   selfUpdateApplyArgs,
   selfUpdateJsonApplyArgs,
   selfUpdateJsonCheckArgs,
-  updateApplyArgs,
-  updatePreviewArgs,
+  splitRuntimesForUpdate,
+  updateApplyArgsForRuntime,
+  updatePreviewArgsForRuntime,
+  usesKitRefresh,
 } from "../lib/commands.mjs";
 import { readProjectConfig, writeProjectConfig } from "../lib/config.mjs";
 import { colorText } from "../lib/colors.mjs";
@@ -48,6 +52,7 @@ import { t } from "../lib/i18n.mjs";
 import { isUnsafeProjectPath, resolveProjectPath } from "../lib/project.mjs";
 import {
   classifyPiProfiles,
+  materializeHelperTarget,
   parsePiProfileInventory,
   piProfileManagerInvocation,
   piProfileProcessOptions,
@@ -140,8 +145,8 @@ Tùy chọn:
   --version, -v          Hiện phiên bản
 
 Target groups:
-  Install                claude-code, codex, cursor, dsh, grok, omp, pi
-  Update                 claude-code, codex, cursor, grok, omp, pi (dsh: unsupported)
+  Install                claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
+  Update                 claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
   Export                 agy, portable
 `);
     return;
@@ -177,8 +182,8 @@ Options:
   --version, -v          Show version
 
 Target groups:
-  Install                claude-code, codex, cursor, dsh, grok, omp, pi
-  Update                 claude-code, codex, cursor, grok, omp, pi (dsh: unsupported)
+  Install                claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
+  Update                 claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
   Export                 agy, portable
 `);
 }
@@ -369,15 +374,11 @@ async function selectTarget(
   const allRuntimeValue = "__all_runtimes__";
   const choices = [
     { label: ui("allRuntimes"), value: allRuntimeValue },
-    ...[...targets].map((target) => ({ label: target, value: target })),
+    ...[...targets].map((target) => ({
+      label: target === "pi-ak" ? ui("piAkProfile") : target === "pi-omp" ? ui("piOmpProfile") : target,
+      value: target,
+    })),
   ];
-  if (promptKey === "updateTargetPrompt") {
-    choices.push({
-      label: ui("dshUpdateUnsupported"),
-      value: "dsh",
-      disabled: true,
-    });
-  }
   const initialValues = [];
   const selected = await (allowBack ? multiChooseWithBack : multiChoose)(
     ui(promptKey, promptValues),
@@ -468,7 +469,9 @@ async function install(commandOptions, allowBack = false) {
       {
         key: "target",
         select: (values) => selectTarget(
-          commandOptions, config, INSTALL_TARGETS, "targetPrompt", routeCanGoBack, allowBack,
+          commandOptions, config, helperRuntimeTargets({
+            command: "install", global: scope.global,
+          }), "targetPrompt", routeCanGoBack, allowBack,
           { kit: kitName(values.kit) },
         ),
       },
@@ -478,12 +481,16 @@ async function install(commandOptions, allowBack = false) {
     if (!scopeWasPrompted) return BACK;
   }
   const selection = { ...scope, ...route };
+  if (specHasProfileTarget(selection.target) && !selection.global) {
+    throw new Error(ui("profileTargetsNeedGlobal"));
+  }
+  const profiles = specHasProfileTarget(selection.target) ? await loadPiProfilesQuiet() : [];
   const installSelections = splitTargetSpec(selection.target)
-    .map((target) => ({ ...selection, target }));
+    .map((target) => materializeHelperTarget({ ...selection, target }, profiles));
 
   printSection(ui("installPlan"));
   for (const targetSelection of installSelections) {
-    printPlan(installArgs(targetSelection), targetSelection.project);
+    printPlan(installArgs(targetSelection), targetSelection.project, targetSelection.envOverrides);
   }
   if (commandOptions.dryRun) {
     process.stdout.write(`\n${ui("dryRunFiles")}\n`);
@@ -500,12 +507,17 @@ async function install(commandOptions, allowBack = false) {
 
   for (const targetSelection of installSelections) {
     const cwd = targetSelection.project || process.cwd();
+    const runOptions = {
+      cwd,
+      envOverrides: targetSelection.envOverrides,
+      envUnset: targetSelection.envUnset,
+    };
     try {
-      await runAkCommand(installArgs(targetSelection), { cwd });
+      await runAkCommand(installArgs(targetSelection), runOptions);
     } catch (error) {
       if (!requiresForceConsent(error)) throw error;
       warning(ui(targetSelection.global ? "globalForceWarning" : "projectForceWarning", {
-        target: targetSelection.target,
+        target: targetSelection.helperTarget || targetSelection.target,
       }));
       if (!process.stdin.isTTY || !process.stdout.isTTY) {
         error.message = `${error.message}\n${ui("forceNeedsConsent")}`;
@@ -517,8 +529,8 @@ async function install(commandOptions, allowBack = false) {
       }
       const forceArgs = installArgs(targetSelection, { force: true });
       printSection(ui("forceInstallPlan"));
-      printPlan(forceArgs, targetSelection.project);
-      await runAkCommand(forceArgs, { cwd });
+      printPlan(forceArgs, targetSelection.project, targetSelection.envOverrides);
+      await runAkCommand(forceArgs, runOptions);
     }
   }
   if (selection.project && !commandOptions.noSave) {
@@ -691,7 +703,9 @@ async function update(commandOptions, allowBack = false) {
         {
           key: "target",
           select: (values) => selectTarget(
-            commandOptions, config, UPDATE_TARGETS, "updateTargetPrompt", routeCanGoBack, allowBack,
+            commandOptions, config, helperRuntimeTargets({
+              command: "update", global: scope.global,
+            }), "updateTargetPrompt", routeCanGoBack, allowBack,
             { kit: kitName(values.kit) },
           ),
         },
@@ -714,9 +728,13 @@ async function update(commandOptions, allowBack = false) {
     ...scope,
     channel,
   };
-  const updateSelections = selection.global
-    ? [selection]
-    : splitTargetSpec(selection.target).map((target) => ({ ...selection, target }));
+  if (specHasProfileTarget(selection.target) && !selection.global) {
+    throw new Error(ui("profileTargetsNeedGlobal"));
+  }
+  const profiles = specHasProfileTarget(selection.target) ? await loadPiProfilesQuiet() : [];
+  const updateSelections = splitTargetSpec(selection.target).map((target) => (
+    materializeHelperTarget({ ...selection, target }, profiles)
+  ));
   if (selection.global) warning(ui("globalUpdateSafety"));
   if (channel === "beta") {
     const betaBinary = await prepareBetaBinary(commandOptions, { requiresPreview: true });
@@ -726,15 +744,24 @@ async function update(commandOptions, allowBack = false) {
   printSection(ui("updatePreview"));
   for (const targetSelection of updateSelections) {
     if (updateSelections.length > 1) {
-      process.stdout.write(`${colorText(targetSelection.target, "target")}\n`);
+      process.stdout.write(`${colorText(targetSelection.helperTarget, "target")}\n`);
     }
-    await runAkCommand(updatePreviewArgs(targetSelection), {
-      cwd: targetSelection.project || process.cwd(),
-    });
+    const previewArgs = updatePreviewArgsForRuntime(targetSelection);
+    if (previewArgs) {
+      await runAkCommand(previewArgs, {
+        cwd: targetSelection.project || process.cwd(),
+        envOverrides: targetSelection.envOverrides,
+        envUnset: targetSelection.envUnset,
+      });
+    }
   }
   printSection(ui("applyPlan"));
   for (const targetSelection of updateSelections) {
-    printPlan(updateApplyArgs(targetSelection), targetSelection.project);
+    printPlan(
+      updateApplyArgsForRuntime(targetSelection),
+      targetSelection.project,
+      targetSelection.envOverrides,
+    );
   }
   if (commandOptions.dryRun) {
     process.stdout.write(`\n${ui("dryRunFiles")}\n`);
@@ -746,8 +773,10 @@ async function update(commandOptions, allowBack = false) {
   }
 
   for (const targetSelection of updateSelections) {
-    await runAkCommand(updateApplyArgs(targetSelection), {
+    await runAkCommand(updateApplyArgsForRuntime(targetSelection), {
       cwd: targetSelection.project || process.cwd(),
+      envOverrides: targetSelection.envOverrides,
+      envUnset: targetSelection.envUnset,
     });
   }
   if (selection.project && !commandOptions.noSave) {
@@ -756,18 +785,34 @@ async function update(commandOptions, allowBack = false) {
   process.stdout.write(`${ui("updateComplete")}\n`);
 }
 
-function updateAllPreviewArgs(candidate, channel) {
-  if (candidate.kind === "global" || candidate.kind === "profile") {
-    return globalUpdatePreviewArgs(channel, candidate.runtimes, candidate.kit);
+function updateAllCommandPlans(candidate, channel) {
+  const kit = candidate.kit;
+  if (candidate.kind === "project") {
+    if (usesKitRefresh(candidate.runtime)) {
+      return [{ preview: null, apply: kitRefreshArgs({
+        global: false, kit, channel, target: candidate.runtime,
+      }) }];
+    }
+    return [{
+      preview: projectUpdatePreviewArgs(candidate.path, candidate.runtime, channel, kit),
+      apply: projectUpdateApplyArgs(candidate.path, candidate.runtime, channel, kit),
+    }];
   }
-  return projectUpdatePreviewArgs(candidate.path, candidate.runtime, channel, candidate.kit);
-}
-
-function updateAllApplyArgs(candidate, channel) {
-  if (candidate.kind === "global" || candidate.kind === "profile") {
-    return globalUpdateApplyArgs(channel, candidate.runtimes, candidate.kit);
+  const { update, refresh } = splitRuntimesForUpdate(candidate.runtimes);
+  const plans = [];
+  if (update.length > 0) {
+    plans.push({
+      preview: globalUpdatePreviewArgs(channel, update, kit),
+      apply: globalUpdateApplyArgs(channel, update, kit),
+    });
   }
-  return projectUpdateApplyArgs(candidate.path, candidate.runtime, channel, candidate.kit);
+  for (const runtime of refresh) {
+    plans.push({
+      preview: null,
+      apply: kitRefreshArgs({ global: true, kit, channel, target: runtime }),
+    });
+  }
+  return plans;
 }
 
 async function askDeepScanRoots() {
@@ -852,6 +897,18 @@ function printUpdateInventory(groups) {
 function orderUpdateCandidates(candidates) {
   const priority = { profile: 0, global: 1, project: 2 };
   return [...candidates].sort((left, right) => priority[left.kind] - priority[right.kind]);
+}
+
+async function loadPiProfilesQuiet() {
+  try {
+    const inventory = await runCapture(piProfileManager.binary, [
+      ...piProfileManager.prefixArgs,
+      "profiles", "list", "--json",
+    ]);
+    return parsePiProfileInventory(inventory.stdout);
+  } catch {
+    return [];
+  }
 }
 
 async function loadUpdateInventory(commandOptions, deepScanRoots) {
@@ -1008,11 +1065,15 @@ async function updateAll(commandOptions, allowBack = false) {
     printSection(ui("updateAllPreview"));
     for (const candidate of selected) {
       process.stdout.write(`\n${colorText(candidate.label, "target")}\n`);
-      await runAkCommand(updateAllPreviewArgs(candidate, channel), candidate);
+      for (const plan of updateAllCommandPlans(candidate, channel)) {
+        if (plan.preview) await runAkCommand(plan.preview, candidate);
+      }
     }
     printSection(ui("updateAllApplyPlan"));
     for (const candidate of selected) {
-      printPlan(updateAllApplyArgs(candidate, channel), null, candidate.envOverrides);
+      for (const plan of updateAllCommandPlans(candidate, channel)) {
+        printPlan(plan.apply, null, candidate.envOverrides);
+      }
     }
     if (commandOptions.dryRun) {
       process.stdout.write(`\n${ui("dryRunFiles")}\n`);
@@ -1028,7 +1089,9 @@ async function updateAll(commandOptions, allowBack = false) {
         total: selected.length,
         label: candidate.label,
       })}\n`);
-      await runAkCommand(updateAllApplyArgs(candidate, channel), candidate);
+      for (const plan of updateAllCommandPlans(candidate, channel)) {
+        await runAkCommand(plan.apply, candidate);
+      }
     }
     process.stdout.write(`${ui("updateAllComplete")}\n`);
     return;
