@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requiresForceConsent, spawnInvocation, summarizeCommandFailure } from "../lib/runner.mjs";
+import {
+  isLinkedNativeDestinationError,
+  linkedNativeDestinationPath,
+  requiresForceConsent,
+  spawnInvocation,
+  summarizeCommandFailure,
+} from "../lib/runner.mjs";
 
 test("runs JavaScript command shims through Node on Windows", () => {
   assert.deepEqual(spawnInvocation("C:\\tools\\ppm.mjs", ["profiles", "list"], "win32"), {
@@ -51,6 +57,15 @@ test("limits human command errors to useful leading lines", () => {
     "detail three",
     "detail four",
   ].join("\n"));
+});
+
+test("classifies ak linked native destination failures", () => {
+  const error = Object.assign(new Error("ak exited with status 1"), {
+    stderr: 'Error: init: emit target "omp" failed: omp: unsafe native destination "/tmp/project/AGENTS.md": fsutil: path traversal rejected: linked path component /tmp/project/AGENTS.md',
+  });
+  assert.equal(isLinkedNativeDestinationError(error), true);
+  assert.equal(linkedNativeDestinationPath(error), "/tmp/project/AGENTS.md");
+  assert.equal(isLinkedNativeDestinationError({ message: "network unavailable" }), false);
 });
 
 test("requires separate force consent only for overwrite or drift failures", () => {

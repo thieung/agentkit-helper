@@ -22,6 +22,11 @@ test("only reports failures thrown by the configured ak binary", () => {
   assert.equal(isReportableAkError(helperValidationError, "/custom/bin/ak"), false);
   assert.equal(isReportableAkError(akError, "/custom/bin/ak"), true);
   assert.equal(isReportableAkError(installerError, "/custom/bin/ak"), false);
+  const linkedNativeError = Object.assign(new Error("ak exited with status 1"), {
+    command: { binary: "/custom/bin/ak", args: ["kit", "install"], cwd: "/project" },
+    stderr: "unsafe native destination \"/project/AGENTS.md\": fsutil: path traversal rejected: linked path component /project/AGENTS.md",
+  });
+  assert.equal(isReportableAkError(linkedNativeError, "/custom/bin/ak"), false);
 });
 
 test("redacts project, home, and common credential formats", () => {
