@@ -1,6 +1,6 @@
 {
   "name": "@thieung/agentkit-helper",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Community helper for installing and updating AgentKit kits by runtime and channel",
   "type": "module",
   "bin": {
