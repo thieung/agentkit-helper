@@ -49,7 +49,7 @@ import {
   resolveIssueRepository,
 } from "../lib/github-issue.mjs";
 import { t } from "../lib/i18n.mjs";
-import { isUnsafeProjectPath, resolveProjectPath } from "../lib/project.mjs";
+import { isUnsafeProjectPath, linkedNativeDestination, resolveProjectPath } from "../lib/project.mjs";
 import {
   classifyPiProfiles,
   materializeHelperTarget,
@@ -74,6 +74,8 @@ import {
 } from "../lib/prompts.mjs";
 import {
   ensureAk,
+  isLinkedNativeDestinationError,
+  linkedNativeDestinationPath,
   requiresForceConsent,
   run,
   runCapture,
@@ -197,6 +199,26 @@ function printPlan(args, cwd, envOverrides = {}) {
 
 function printSection(message) {
   process.stdout.write(`\n${colorText(message, "section")}\n`);
+}
+
+async function assertOmpNativeDestinations(selection) {
+  if (selection.global || selection.kind === "global" || selection.kind === "profile") {
+    return;
+  }
+  const target = selection.target || selection.runtime;
+  if (target !== "omp") return;
+  const project = selection.project || selection.path;
+  if (!project) return;
+  const linked = await linkedNativeDestination(project, "AGENTS.md");
+  if (!linked) return;
+  throw new Error(ui("linkedNativeDestination", { path: linked }));
+}
+
+function helperErrorMessage(error) {
+  if (!isLinkedNativeDestinationError(error)) return error.message;
+  return ui("linkedNativeDestination", {
+    path: linkedNativeDestinationPath(error) || "AGENTS.md",
+  });
 }
 
 async function runAkCommand(
@@ -493,6 +515,9 @@ async function install(commandOptions, allowBack = false) {
     printPlan(installArgs(targetSelection), targetSelection.project, targetSelection.envOverrides);
   }
   if (commandOptions.dryRun) {
+    for (const targetSelection of installSelections) {
+      await assertOmpNativeDestinations(targetSelection);
+    }
     process.stdout.write(`\n${ui("dryRunFiles")}\n`);
     return;
   }
@@ -506,6 +531,7 @@ async function install(commandOptions, allowBack = false) {
   }
 
   for (const targetSelection of installSelections) {
+    await assertOmpNativeDestinations(targetSelection);
     const cwd = targetSelection.project || process.cwd();
     const runOptions = {
       cwd,
@@ -736,6 +762,9 @@ async function update(commandOptions, allowBack = false) {
     materializeHelperTarget({ ...selection, target }, profiles)
   ));
   if (selection.global) warning(ui("globalUpdateSafety"));
+  for (const targetSelection of updateSelections) {
+    await assertOmpNativeDestinations(targetSelection);
+  }
   if (channel === "beta") {
     const betaBinary = await prepareBetaBinary(commandOptions, { requiresPreview: true });
     if (!betaBinary.proceed) return;
@@ -1064,6 +1093,7 @@ async function updateAll(commandOptions, allowBack = false) {
 
     printSection(ui("updateAllPreview"));
     for (const candidate of selected) {
+      await assertOmpNativeDestinations(candidate);
       process.stdout.write(`\n${colorText(candidate.label, "target")}\n`);
       for (const plan of updateAllCommandPlans(candidate, channel)) {
         if (plan.preview) await runAkCommand(plan.preview, candidate);
@@ -1277,7 +1307,7 @@ try {
     process.exitCode = 0;
   } else {
     const exitCode = error.exitCode || 1;
-    process.stderr.write(`${ui("error", { message: error.message })}\n`);
+    process.stderr.write(`${ui("error", { message: helperErrorMessage(error) })}\n`);
     try {
       await offerGitHubIssue(error);
     } catch (reportError) {

@@ -47,4 +47,6 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.match(t("en", "agyExport"), /global-only export/);
   assert.match(t("vi", "portableExport"), /thư mục output/);
   assert.match(t("vi", "unsafeCwd", { cwd: "/tmp/project" }), /\/tmp\/project/);
+  assert.match(t("en", "linkedNativeDestination", { path: "/tmp/project/AGENTS.md" }), /symlink/);
+  assert.match(t("vi", "linkedNativeDestination", { path: "/tmp/project/AGENTS.md" }), /symlink/);
 });

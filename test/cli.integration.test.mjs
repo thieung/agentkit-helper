@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
@@ -224,6 +224,70 @@ if (args[0] === "--version") {
     assert.doesNotMatch(result.stderr, /hidden fifth line/);
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
     assert.deepEqual(calls[1].slice(-2), ["--yes", "--verbose"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("project omp install fails closed when AGENTS.md is a symlink", {
+  skip: process.platform === "win32",
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-omp-link-"));
+  const project = join(directory, "project");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(project));
+  await writeFile(join(project, "CLAUDE.md"), "hello\n");
+  await symlink("CLAUDE.md", join(project, "AGENTS.md"));
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "install", "--project", project, "--target", "omp",
+      "--channel", "stable", "--yes",
+    ], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+    });
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /symlink/);
+    assert.match(result.stderr, /AGENTS\.md/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [["--version"]]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("maps ak linked native destination failures without filing a helper issue class", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-omp-map-"));
+  const project = join(directory, "project");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(project));
+  await writeFile(fakeAk, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("ak 2.14.0\\n");
+} else if (args[0] === "kit") {
+  process.stderr.write('Error: init: emit target "omp" failed: omp: unsafe native destination "/tmp/project/AGENTS.md": fsutil: path traversal rejected: linked path component /tmp/project/AGENTS.md\\n');
+  process.exitCode = 1;
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "install", "--project", project, "--target", "omp",
+      "--channel", "stable", "--yes",
+    ], { AK_HELPER_AK_BIN: fakeAk });
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /symlink/);
+    assert.match(result.stderr, /\/tmp\/project\/AGENTS\.md/);
+    assert.doesNotMatch(result.stderr, /path traversal rejected/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
