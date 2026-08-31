@@ -21,6 +21,9 @@ test("home and filesystem root stay global-only for sync", () => {
   assert.equal(isHomeOrRootSyncCwd(home, home), true);
   assert.equal(isHomeOrRootSyncCwd(parse(process.cwd()).root, home), true);
   assert.equal(isHomeOrRootSyncCwd(join(home, "project"), home), false);
+  if (process.platform === "win32") {
+    assert.equal(isHomeOrRootSyncCwd("C:\\Temp\\Home", "c:\\temp\\home"), true);
+  }
   const previous = process.env.AK_HELPER_HOME;
   process.env.AK_HELPER_HOME = home;
   try {

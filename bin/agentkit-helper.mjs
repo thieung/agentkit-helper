@@ -1021,7 +1021,12 @@ async function loadUpdateInventory(commandOptions, deepScanRoots) {
 
 async function loadSyncInventory() {
   const home = await resolveCanonicalHome();
-  const cwd = process.cwd();
+  let cwd = process.cwd();
+  try {
+    cwd = await realpath(cwd);
+  } catch {
+    cwd = resolve(cwd);
+  }
   const project = await discoverSyncProject({
     cwd,
     home,
