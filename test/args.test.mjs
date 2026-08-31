@@ -194,6 +194,16 @@ test("supports a dedicated self-update command and preserves binary-only", () =>
   );
 });
 
+test("sync infers channel from the binary and rejects scope overrides", () => {
+  assert.equal(parseArgs(["sync"]).command, "sync");
+  assert.equal(parseArgs(["sync", "--dry-run"]).dryRun, true);
+  assert.equal(parseArgs(["sync", "--yes"]).yes, true);
+  assert.throws(() => parseArgs(["sync", "--channel", "stable"]), /infers channel/);
+  assert.throws(() => parseArgs(["sync", "--project", "/tmp/demo"]), /infers channel/);
+  assert.throws(() => parseArgs(["sync", "--global"]), /infers channel/);
+  assert.throws(() => parseArgs(["sync", "--deep-scan", "/tmp/demo"]), /infers channel/);
+});
+
 test("rejects custom Pi profiles on project scope", () => {
   assert.throws(
     () => parseArgs(["install", "--project", "/tmp/demo", "--target", "pi-ak"]),
