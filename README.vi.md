@@ -30,10 +30,11 @@ Trong TUI, dùng:
 - Esc để trở về bước trước
 
 Bạn chỉ cần chọn scope project hoặc user/global, Engineer hoặc Marketing Kit,
-một hay nhiều runtime và release channel Stable hoặc Beta. Khi thư mục hiện tại
-là project hợp lệ (không phải `/` hay home), TUI có **Dùng project hiện tại**;
-CLI tương đương là `--project .`. AgentKit vẫn quản lý việc xác minh Kit,
-ownership, snapshot và file riêng của từng runtime.
+một hay nhiều runtime và release channel Stable hoặc Beta. **Sync** scan một lần,
+hiện binary `ak` đang cài cùng các Kit đã detect, rồi hỏi confirm trước khi chạy.
+Khi thư mục hiện tại là project hợp lệ (không phải `/` hay home), TUI có **Dùng
+project hiện tại**; CLI tương đương là `--project .`. AgentKit vẫn quản lý việc
+xác minh Kit, ownership, snapshot và file riêng của từng runtime.
 
 Khi cài global scope, helper chạy trước mà không có `--force`. Nếu target đã
 tồn tại hoặc có drift, TUI hiển thị WARNING và hỏi consent riêng, mặc định No.
@@ -78,12 +79,20 @@ Cập nhật Kit install hoặc chỉ cập nhật signed `ak` binary:
 akh update --project /path/to/project
 akh update-all --channel stable
 akh self-update --channel stable
+akh sync
 ```
+
+`akh sync` dùng channel của `ak` binary đang cài. Ở `/` hoặc home thì cập nhật
+binary và **mọi runtime đã cài global** mà helper detect được (`claude-code`,
+`codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, kèm profile `pi-ak`/`pi-omp` nếu
+có). Ở project do AgentKit sở hữu thì cập nhật thêm Kit của project đó. CLI
+one-shot áp dụng ngay; `akh sync --dry-run` chỉ preview.
 
 Preview mà không áp dụng thay đổi:
 
 ```bash
 akh update --project /path/to/project --dry-run
+akh sync --dry-run
 ```
 
 Các target:

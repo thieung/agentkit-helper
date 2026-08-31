@@ -31,7 +31,8 @@ In the TUI, use:
 - Esc to return to the previous step
 
 Choose a project or user/global scope, Engineer or Marketing Kit, one or more
-runtimes, and the Stable or Beta channel. When the current directory is a safe
+runtimes, and the Stable or Beta channel. **Sync** scans once, shows the
+installed `ak` binary plus detected Kits, then confirms before running. When the current directory is a safe
 project path (not `/` or your home directory), the TUI offers **Use current
 project**; the equivalent CLI flag is `--project .`. AgentKit remains
 responsible for Kit verification, ownership, snapshots, and runtime-specific
@@ -81,12 +82,21 @@ Update Kit installs or only the signed `ak` binary:
 akh update --project /path/to/project
 akh update-all --channel stable
 akh self-update --channel stable
+akh sync
 ```
+
+`akh sync` uses the channel of the installed `ak` binary. From `/` or your home
+directory it updates that binary and **every globally installed runtime** it
+detects (`claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, plus
+`pi-ak`/`pi-omp` profiles when present). From an AgentKit-owned project it also
+updates that project's Kits. CLI one-shot applies immediately; `akh sync --dry-run`
+previews only.
 
 Preview without applying changes:
 
 ```bash
 akh update --project /path/to/project --dry-run
+akh sync --dry-run
 ```
 
 Targets:

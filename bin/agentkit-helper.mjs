@@ -87,6 +87,12 @@ import {
   parseSelfUpdateOutput,
   releaseChannelForVersion,
 } from "../lib/self-update.mjs";
+import {
+  discoverSyncProject,
+  isHomeOrRootSyncCwd,
+  resolveCanonicalHome,
+  syncChannelFromBinary,
+} from "../lib/sync.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const metadata = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
@@ -123,6 +129,7 @@ Cách dùng:
   agentkit-helper update [tùy chọn]
   agentkit-helper self-update [tùy chọn]
   agentkit-helper update-all [tùy chọn]
+  agentkit-helper sync [tùy chọn]
   agentkit-helper export [tùy chọn]
   agentkit-helper doctor [--project <đường-dẫn>]
 
@@ -160,6 +167,7 @@ Usage:
   agentkit-helper update [options]
   agentkit-helper self-update [options]
   agentkit-helper update-all [options]
+  agentkit-helper sync [options]
   agentkit-helper export [options]
   agentkit-helper doctor [--project <path>]
 
@@ -267,6 +275,7 @@ async function checkInteractiveBinaryUpdate() {
 
 async function chooseCommand(allowLanguageBack = false) {
   const choices = [
+    { label: ui("syncAction"), value: "sync" },
     { label: ui("selfUpdateAction"), value: "self-update" },
     { label: ui("installAction"), value: "install" },
     { label: ui("updateAction"), value: "update" },
@@ -274,7 +283,7 @@ async function chooseCommand(allowLanguageBack = false) {
     { label: ui("exportAction"), value: "export" },
     { label: ui("doctorAction"), value: "doctor" },
   ];
-  const defaultIndex = binaryUpdateAvailable ? 0 : 1;
+  const defaultIndex = 0;
   return allowLanguageBack
     ? chooseWithBack(ui("commandPrompt"), choices, defaultIndex, ui("escapeBack"))
     : choose(ui("commandPrompt"), choices, defaultIndex);
@@ -940,6 +949,42 @@ async function loadPiProfilesQuiet() {
   }
 }
 
+async function loadProfileUpdateState(globalInstalls) {
+  const warnings = [];
+  const profileRuntimeInstalls = new Set(globalInstalls
+    .filter((install) => install.kit === "engineer")
+    .flatMap((install) => install.runtimes)
+    .filter((runtime) => runtime === "pi" || runtime === "omp"));
+  let updateableProfiles = [];
+  const claimedProfileRuntimes = new Set();
+  try {
+    const inventory = await runCapture(piProfileManager.binary, [
+      ...piProfileManager.prefixArgs,
+      "profiles", "list", "--json",
+    ]);
+    const profiles = parsePiProfileInventory(inventory.stdout);
+    for (const profile of profiles.filter((profile) => profile.agentkitEnabled)) {
+      claimedProfileRuntimes.add(profile.runtime);
+    }
+    const classified = classifyPiProfiles(profiles);
+    updateableProfiles = classified.updateable;
+    for (const profile of classified.skipped) {
+      warnings.push(ui("piProfileSkipped", {
+        profile: profile.id,
+        reason: !profile.agentkitEnabled
+          ? ui("piProfileNoAgentKit")
+          : ui("piProfileNotSafe"),
+      }));
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      for (const runtime of profileRuntimeInstalls) claimedProfileRuntimes.add(runtime);
+      warnings.push(ui("piProfileDiscoveryUnavailable", { message: error.message }));
+    }
+  }
+  return { updateableProfiles, claimedProfileRuntimes, warnings };
+}
+
 async function loadUpdateInventory(commandOptions, deepScanRoots) {
   const registry = await withSpinner(
     ui("loadingRegistry"),
@@ -961,45 +1006,53 @@ async function loadUpdateInventory(commandOptions, deepScanRoots) {
     supportedRuntimes: UPDATE_TARGETS,
     kits: KITS,
   });
-  const profileRuntimeInstalls = new Set(globalInstalls
-    .filter((install) => install.kit === "engineer")
-    .flatMap((install) => install.runtimes)
-    .filter((runtime) => runtime === "pi" || runtime === "omp"));
-  let updateableProfiles = [];
-  const claimedProfileRuntimes = new Set();
-  try {
-    const inventory = await runCapture(piProfileManager.binary, [
-      ...piProfileManager.prefixArgs,
-      "profiles", "list", "--json",
-    ]);
-    const profiles = parsePiProfileInventory(inventory.stdout);
-    for (const profile of profiles.filter((profile) => profile.agentkitEnabled)) {
-      claimedProfileRuntimes.add(profile.runtime);
-    }
-    const classified = classifyPiProfiles(profiles);
-    updateableProfiles = classified.updateable;
-    for (const profile of classified.skipped) {
-      discovery.warnings.push(ui("piProfileSkipped", {
-        profile: profile.id,
-        reason: !profile.agentkitEnabled
-          ? ui("piProfileNoAgentKit")
-          : ui("piProfileNotSafe"),
-      }));
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      for (const runtime of profileRuntimeInstalls) claimedProfileRuntimes.add(runtime);
-      discovery.warnings.push(ui("piProfileDiscoveryUnavailable", { message: error.message }));
-    }
-  }
+  const profiles = await loadProfileUpdateState(globalInstalls);
+  discovery.warnings.push(...profiles.warnings);
   return {
     discovery,
     groups: buildUpdateCandidates(
       discovery,
       globalInstalls,
-      updateableProfiles,
-      claimedProfileRuntimes,
+      profiles.updateableProfiles,
+      profiles.claimedProfileRuntimes,
     ),
+  };
+}
+
+async function loadSyncInventory() {
+  const home = await resolveCanonicalHome();
+  let cwd = process.cwd();
+  try {
+    cwd = await realpath(cwd);
+  } catch {
+    cwd = resolve(cwd);
+  }
+  const project = await discoverSyncProject({
+    cwd,
+    home,
+    supportedRuntimes: UPDATE_TARGETS,
+    kits: [...KITS],
+  });
+  const globalInstalls = await discoverGlobalKitInstalls({
+    akHome: process.env.AGENTKIT_HOME,
+    supportedRuntimes: UPDATE_TARGETS,
+    kits: KITS,
+  });
+  const profiles = await loadProfileUpdateState(globalInstalls);
+  const discovery = {
+    projects: project ? [project] : [],
+    warnings: profiles.warnings,
+  };
+  return {
+    project,
+    homeOrRoot: isHomeOrRootSyncCwd(cwd, home),
+    groups: buildUpdateCandidates(
+      discovery,
+      globalInstalls,
+      profiles.updateableProfiles,
+      profiles.claimedProfileRuntimes,
+    ),
+    warnings: profiles.warnings,
   };
 }
 
@@ -1128,6 +1181,128 @@ async function updateAll(commandOptions, allowBack = false) {
   }
 }
 
+function printSyncInventory(channel, binary, inventory) {
+  printSection(ui("syncInventory"));
+  process.stdout.write(`  ${ui("syncChannel", { channel })}\n`);
+  if (binary.classification === "update") {
+    process.stdout.write(`  ${colorText(ui("syncBinaryUpdate", {
+      current: binary.check.current_version,
+      latest: binary.check.latest_version,
+      channel: binary.check.channel || channel,
+    }), "binary")}\n`);
+  } else if (binary.classification === "current") {
+    process.stdout.write(`  ${colorText(ui("syncBinaryCurrent", {
+      version: binary.check.current_version,
+      channel: binary.check.channel || channel,
+    }), "binary")}\n`);
+  } else {
+    process.stdout.write(`  ${ui("syncBinarySkip", { status: binary.check.status })}\n`);
+  }
+  if (inventory.groups.other.length > 0) {
+    printCandidateGroup(ui("otherInstalls"), inventory.groups.other);
+  }
+  const projectCandidates = [
+    ...inventory.groups.registered,
+    ...inventory.groups.unregistered,
+  ];
+  if (projectCandidates.length > 0) {
+    printCandidateGroup(ui("syncProjectScope"), projectCandidates);
+  } else if (inventory.homeOrRoot) {
+    process.stdout.write(`  ${ui("syncHomeScope")}\n`);
+  } else {
+    process.stdout.write(`  ${ui("syncNoProject")}\n`);
+  }
+}
+
+async function readBinarySyncState(channel) {
+  const check = parseSelfUpdateOutput((await runCapture(
+    akBinary, selfUpdateJsonCheckArgs(channel),
+  )).stdout);
+  return { check, classification: classifySelfUpdate(check) };
+}
+
+async function applySyncBinary(channel) {
+  const applied = parseSelfUpdateOutput((await runCapture(
+    akBinary, selfUpdateJsonApplyArgs(channel),
+  )).stdout);
+  if (!applied.applied) throw new Error(ui("binaryNoChange"));
+  installedAkVersion = (await runCapture(akBinary, ["--version"])).stdout.trim();
+  const verifiedVersion = installedAkVersion.replace(/^ak\s+/i, "");
+  if (verifiedVersion !== applied.latest_version && verifiedVersion !== `v${applied.latest_version}`) {
+    throw new Error(`binary verification failed: expected ${applied.latest_version}, got ${verifiedVersion}`);
+  }
+  process.stdout.write(`${ui("binaryComplete")}\n`);
+}
+
+async function sync(commandOptions, interactive = false) {
+  const channel = syncChannelFromBinary(installedAkVersion);
+  const inventory = await loadSyncInventory();
+  for (const warning of inventory.warnings) {
+    process.stderr.write(`${ui("discoveryWarning", { message: warning })}\n`);
+  }
+  const binary = await readBinarySyncState(channel);
+  printSyncInventory(channel, binary, inventory);
+  const selected = orderUpdateCandidates([
+    ...inventory.groups.registered,
+    ...inventory.groups.unregistered,
+    ...inventory.groups.other,
+  ]);
+  const binaryNeedsUpdate = binary.classification === "update";
+  if (!binaryNeedsUpdate && selected.length === 0) {
+    process.stdout.write(`${ui("syncNothing")}\n`);
+    return;
+  }
+
+  printSection(ui("syncApplyPlan"));
+  if (binaryNeedsUpdate) printPlan(selfUpdateApplyArgs(channel));
+  for (const candidate of selected) {
+    for (const plan of updateAllCommandPlans(candidate, channel)) {
+      printPlan(plan.apply, null, candidate.envOverrides);
+    }
+  }
+
+  if (interactive && !(await approve(commandOptions, ui("confirmSync")))) {
+    process.stdout.write(`${ui("cancelledSync")}\n`);
+    return;
+  }
+
+  if (commandOptions.dryRun) {
+    if (binaryNeedsUpdate) {
+      process.stdout.write(`\n${ui("syncBinaryDryRunBlock")}\n`);
+      return;
+    }
+    for (const candidate of selected) {
+      await assertOmpNativeDestinations(candidate);
+      process.stdout.write(`\n${colorText(candidate.label, "target")}\n`);
+      for (const plan of updateAllCommandPlans(candidate, channel)) {
+        if (plan.preview) await runAkCommand(plan.preview, candidate);
+      }
+    }
+    process.stdout.write(`\n${ui("dryRunFiles")}\n`);
+    return;
+  }
+
+  if (binaryNeedsUpdate) {
+    if (channel === "beta") warnBetaLifecycle(channel);
+    await applySyncBinary(channel);
+  }
+  if (selected.some((candidate) => candidate.kind === "global" || candidate.kind === "profile")) {
+    warning(ui("globalUpdateSafety"));
+  }
+  for (const [index, candidate] of selected.entries()) {
+    await assertOmpNativeDestinations(candidate);
+    process.stdout.write(`${ui("updateProgress", {
+      current: index + 1,
+      total: selected.length,
+      label: candidate.label,
+    })}\n`);
+    for (const plan of updateAllCommandPlans(candidate, channel)) {
+      await runAkCommand(plan.apply, candidate);
+    }
+  }
+  process.stdout.write(`${ui("syncComplete")}\n`);
+}
+
 async function exportKit(commandOptions, allowBack = false) {
   const choices = [
     { label: ui("agyExport"), value: "agy" },
@@ -1244,6 +1419,9 @@ async function main() {
         break;
       case "update-all":
         result = await updateAll(options, interactiveRoot);
+        break;
+      case "sync":
+        result = await sync(options, interactiveRoot);
         break;
       case "export":
         result = await exportKit(options, interactiveRoot);

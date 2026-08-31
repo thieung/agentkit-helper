@@ -22,6 +22,10 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   }), "ĐÃ LÀ BẢN MỚI NHẤT: ak 2.15.0-beta.4 trên channel beta.");
   assert.match(t("en", "updateAllAction"), /all detected AgentKit installs/);
   assert.match(t("vi", "updateAllAction"), /AgentKit install đã detect/);
+  assert.match(t("en", "syncAction"), /Sync ak binary/);
+  assert.match(t("vi", "syncAction"), /Sync ak binary/);
+  assert.match(t("vi", "syncHomeScope"), /mọi runtime đã cài global/);
+  assert.match(t("en", "confirmSync"), /Apply this sync plan/);
   assert.match(t("vi", "binaryDowngradeWarning", {
     channel: "stable", latest: "2.14.0", current: "2.15.0-beta.3",
   }), /không downgrade/);

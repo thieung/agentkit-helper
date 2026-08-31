@@ -678,6 +678,252 @@ if (args.join(" ") === "projects list --json") {
   }
 });
 
+test("sync one-shot uses the binary channel and current owned project only", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-sync-"));
+  const project = join(directory, "project");
+  const other = join(directory, "other");
+  const home = join(directory, "home");
+  const akHome = join(home, ".agentkit");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const projectManifest = join(
+    project, ".agentkit", "adapters", "codex", "engineer", ".agentkit", "install-manifest.json",
+  );
+  const otherManifest = join(
+    other, ".agentkit", "adapters", "cursor", "engineer", ".agentkit", "install-manifest.json",
+  );
+  const globalManifest = join(
+    akHome, "adapters", "grok", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => Promise.all([
+    mkdir(dirname(projectManifest), { recursive: true }),
+    mkdir(dirname(otherManifest), { recursive: true }),
+    mkdir(dirname(globalManifest), { recursive: true }),
+  ]));
+  await writeFile(join(project, ".agentkit", "ownership.json"), '{"version":1,"project_id":"demo"}\n');
+  await writeFile(join(other, ".agentkit", "ownership.json"), '{"version":1,"project_id":"other"}\n');
+  await writeFile(projectManifest, '{"version":1,"kit":"engineer"}\n');
+  await writeFile(otherManifest, '{"version":1,"kit":"engineer"}\n');
+  await writeFile(globalManifest, '{"version":1,"kit":"engineer"}\n');
+  const canonicalProject = await realpath(project);
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.15.0-beta.5\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: false, status: "current",
+      current_version: "2.15.0-beta.5", latest_version: "2.15.0-beta.5",
+      channel: "beta", applied: false,
+    },
+  }));
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli(["sync"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+      AK_HELPER_HOME: home,
+      HOME: home,
+    }, project);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Using installed ak channel: beta/);
+    assert.match(result.stdout, /Engineer Kit global scope \(grok\)/);
+    assert.match(result.stdout, /project — Engineer Kit \(codex\)/);
+    assert.doesNotMatch(result.stdout, /other — Engineer Kit/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
+      ["update", "--global", "--kits", "engineer", "--target", "grok", "--channel", "beta", "--yes", "--verbose"],
+      ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sync dry-run from home skips project Kits and never applies", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-sync-home-"));
+  const home = join(directory, "home");
+  const akHome = join(home, ".agentkit");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const globalManifest = join(
+    akHome, "adapters", "cursor", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => Promise.all([
+    mkdir(dirname(globalManifest), { recursive: true }),
+    mkdir(join(home, ".agentkit", "adapters", "codex", "engineer", ".agentkit"), { recursive: true }),
+  ]));
+  await writeFile(join(home, ".agentkit", "ownership.json"), '{"version":1,"project_id":"home"}\n');
+  await writeFile(
+    join(home, ".agentkit", "adapters", "codex", "engineer", ".agentkit", "install-manifest.json"),
+    '{"version":1,"kit":"engineer"}\n',
+  );
+  await writeFile(globalManifest, '{"version":1,"kit":"engineer"}\n');
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: false, status: "current",
+      current_version: "2.14.0", latest_version: "2.14.0",
+      channel: "stable", applied: false,
+    },
+  }));
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli(["sync", "--dry-run"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+      AK_HELPER_HOME: home,
+      HOME: home,
+    }, home);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /home or filesystem root/);
+    assert.doesNotMatch(result.stdout, /Current project Kits/);
+    assert.doesNotMatch(result.stdout, /home — Engineer Kit \(codex\)/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["self-update", "--check", "--channel", "stable", "--json"],
+      ["update", "--global", "--kits", "engineer", "--target", "codex,cursor", "--channel", "stable", "--show-diff", "--dry-run", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sync from home updates every globally installed runtime", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-sync-globals-"));
+  const home = join(directory, "home");
+  const akHome = join(home, ".agentkit");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const engineerRuntimes = ["claude-code", "codex", "cursor", "dsh", "grok", "omp", "pi"];
+  await import("node:fs/promises").then(({ mkdir }) => Promise.all([
+    ...engineerRuntimes.map((runtime) => mkdir(
+      join(akHome, "adapters", runtime, "engineer", ".agentkit"),
+      { recursive: true },
+    )),
+    mkdir(join(akHome, "adapters", "cursor", "marketing", ".agentkit"), { recursive: true }),
+  ]));
+  await Promise.all(engineerRuntimes.map((runtime) => writeFile(
+    join(akHome, "adapters", runtime, "engineer", ".agentkit", "install-manifest.json"),
+    '{"version":1,"kit":"engineer"}\n',
+  )));
+  await writeFile(
+    join(akHome, "adapters", "cursor", "marketing", ".agentkit", "install-manifest.json"),
+    '{"version":1,"kit":"marketing"}\n',
+  );
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: false, status: "current",
+      current_version: "2.14.0", latest_version: "2.14.0",
+      channel: "stable", applied: false,
+    },
+  }));
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli(["sync"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+      AK_HELPER_HOME: home,
+      HOME: home,
+    }, home);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /every globally installed runtime/);
+    assert.match(result.stdout, /Engineer Kit global scope \(claude-code, codex, cursor, dsh, grok, omp, pi\)/);
+    assert.match(result.stdout, /Marketing Kit global scope \(cursor\)/);
+    assert.doesNotMatch(result.stdout, /Current project Kits/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["self-update", "--check", "--channel", "stable", "--json"],
+      ["update", "--global", "--kits", "engineer", "--target", "claude-code,codex,cursor,grok,omp,pi", "--channel", "stable", "--yes", "--verbose"],
+      ["kit", "refresh", "engineer", "--target", "dsh", "--global", "--channel", "stable", "--yes", "--verbose"],
+      ["update", "--global", "--kits", "marketing", "--target", "cursor", "--channel", "stable", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sync applies a binary update on the installed channel before Kits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-sync-bin-"));
+  const project = join(directory, "project");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const state = join(directory, "ak-version");
+  const manifest = join(
+    project, ".agentkit", "adapters", "claude-code", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(dirname(manifest), { recursive: true }));
+  await writeFile(join(project, ".agentkit", "ownership.json"), '{"version":1,"project_id":"demo"}\n');
+  await writeFile(manifest, '{"version":1,"kit":"engineer"}\n');
+  const canonicalProject = await realpath(project);
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+const current = existsSync(process.env.AK_HELPER_TEST_STATE) ? "2.15.0-beta.5" : "2.13.0-beta.12";
+if (args[0] === "--version") process.stdout.write("ak " + current + "\\n");
+if (args[0] === "self-update" && args.includes("--json")) {
+  if (!args.includes("--check")) writeFileSync(process.env.AK_HELPER_TEST_STATE, "2.15.0-beta.5\\n");
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, kind: "self_update", data: {
+      available: args.includes("--check") && current !== "2.15.0-beta.5",
+      status: args.includes("--check") && current !== "2.15.0-beta.5" ? "update-available" : "current",
+      current_version: current, latest_version: "2.15.0-beta.5", channel: "beta",
+      applied: !args.includes("--check"),
+    },
+  }));
+}
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli(["sync"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AK_HELPER_TEST_STATE: state,
+      AGENTKIT_HOME: join(directory, "empty-home", ".agentkit"),
+      HOME: join(directory, "empty-home"),
+    }, project);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Binary update complete/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [
+      ["--version"],
+      ["self-update", "--check", "--channel", "beta", "--json"],
+      ["self-update", "--channel", "beta", "--yes", "--json"],
+      ["--version"],
+      ["update", canonicalProject, "--kits", "engineer", "--target", "claude-code", "--channel", "beta", "--yes", "--verbose"],
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("export delegates agy and portable without treating them as runtimes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-export-"));
   const fakeAk = join(directory, "ak-fake.mjs");
