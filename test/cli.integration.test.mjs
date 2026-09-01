@@ -969,10 +969,46 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
   }
 });
 
-test("global and binary-only updates work from the root directory", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-binary-"));
+test("global update refuses runtimes without an AgentKit-owned install", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-global-missing-"));
+  const akHome = join(directory, "home", ".agentkit");
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(akHome, { recursive: true }));
+  await writeFile(fakeAk, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_LOG, JSON.stringify(args) + "\\n");
+if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
+`, "utf8");
+  await chmod(fakeAk, 0o755);
+  try {
+    const result = await runCli([
+      "update", "--global", "--target", "cursor", "--channel", "beta", "--yes",
+    ], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+    });
+    assert.equal(result.code, 1, result.stdout);
+    assert.match(result.stderr, /not installed globally for cursor/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.deepEqual(calls, [["--version"]]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("global and binary-only updates work from the root directory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-binary-"));
+  const akHome = join(directory, "home", ".agentkit");
+  const fakeAk = join(directory, "ak-fake.mjs");
+  const log = join(directory, "ak.log");
+  const manifest = join(
+    akHome, "adapters", "codex", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(dirname(manifest), { recursive: true }));
+  await writeFile(manifest, '{"version":1,"kit":"engineer"}\n');
   await writeFile(fakeAk, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
@@ -997,7 +1033,11 @@ if (args.includes("--json")) {
   try {
     const globalResult = await runCli([
       "update", "--global", "--runtime", "codex", "--channel", "beta", "--yes",
-    ], { AK_HELPER_AK_BIN: fakeAk, AK_HELPER_TEST_LOG: log }, parse(process.cwd()).root);
+    ], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+    }, parse(process.cwd()).root);
     assert.equal(globalResult.code, 0, globalResult.stderr);
 
     const binaryResult = await runCli([
@@ -1065,8 +1105,14 @@ if (args.includes("--json")) process.stdout.write(JSON.stringify({
 
 test("global dsh updates through kit refresh", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-dsh-global-"));
+  const akHome = join(directory, "home", ".agentkit");
   const fakeAk = join(directory, "ak-fake.mjs");
   const log = join(directory, "ak.log");
+  const manifest = join(
+    akHome, "adapters", "dsh", "engineer", ".agentkit", "install-manifest.json",
+  );
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(dirname(manifest), { recursive: true }));
+  await writeFile(manifest, '{"version":1,"kit":"engineer"}\n');
   await writeFile(fakeAk, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
@@ -1077,7 +1123,11 @@ if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
   try {
     const result = await runCli([
       "update", "--global", "--target", "dsh", "--channel", "stable", "--yes",
-    ], { AK_HELPER_AK_BIN: fakeAk, AK_HELPER_TEST_LOG: log });
+    ], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+    });
     assert.equal(result.code, 0, result.stderr);
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
     assert.deepEqual(calls, [

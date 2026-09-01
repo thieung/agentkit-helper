@@ -9,6 +9,7 @@ import {
   helperRuntimeTargets,
   KITS,
   parseArgs,
+  PROFILE_TARGETS,
   specHasProfileTarget,
   splitTargetSpec,
   targetSpecIsSupported,
@@ -737,12 +738,44 @@ async function update(commandOptions, allowBack = false) {
         { key: "channel", select: () => selectChannel(commandOptions, config, routeCanGoBack, allowBack) },
         {
           key: "target",
-          select: (values) => selectTarget(
-            commandOptions, config, helperRuntimeTargets({
+          select: async (values) => {
+            const defaultTargets = helperRuntimeTargets({
               command: "update", global: scope.global,
-            }), "updateTargetPrompt", routeCanGoBack, allowBack,
-            { kit: kitName(values.kit) },
-          ),
+            });
+            let targets = defaultTargets;
+            let installed = [];
+            if (scope.global) {
+              const installs = await discoverGlobalKitInstalls({
+                akHome: process.env.AGENTKIT_HOME,
+                supportedRuntimes: UPDATE_TARGETS,
+                kits: [values.kit],
+              });
+              installed = installs[0]?.runtimes ?? [];
+              targets = new Set([
+                ...installed,
+                ...[...defaultTargets].filter((target) => PROFILE_TARGETS.has(target)),
+              ]);
+              if (targets.size === 0) {
+                throw new Error(ui("noGlobalKitInstalls", { kit: kitName(values.kit) }));
+              }
+            }
+            const selected = await selectTarget(
+              commandOptions, config, targets, "updateTargetPrompt", routeCanGoBack, allowBack,
+              { kit: kitName(values.kit) },
+            );
+            if (selected === BACK) return BACK;
+            if (scope.global) {
+              const missing = splitTargetSpec(selected).filter((target) => !targets.has(target));
+              if (missing.length > 0) {
+                throw new Error(ui("globalTargetNotInstalled", {
+                  kit: kitName(values.kit),
+                  target: missing.join(", "),
+                  installed: installed.length > 0 ? installed.join(", ") : ui("noneInstalled"),
+                }));
+              }
+            }
+            return selected;
+          },
         },
       ]);
       if (route !== BACK) {
