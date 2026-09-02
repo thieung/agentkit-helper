@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   exportArgs,
   formatCommand,
+  formatSshCommand,
   globalUpdateApplyArgs,
   globalUpdatePreviewArgs,
   formatEnvironmentAssignments,
@@ -10,7 +11,9 @@ import {
   kitRefreshArgs,
   projectUpdateApplyArgs,
   projectUpdatePreviewArgs,
+  REMOTE_PATH_EXPORT,
   splitRuntimesForUpdate,
+  sshInvocationArgs,
   updateApplyArgs,
   updateApplyArgsForRuntime,
   updatePreviewArgs,
@@ -127,4 +130,25 @@ test("routes dsh updates through kit refresh instead of ak update", () => {
     update: ["codex", "pi"],
     refresh: ["dsh"],
   });
+});
+
+test("formats remote SSH invocations with pinned bash -lc, BatchMode, and remote PATH export", () => {
+  assert.match(REMOTE_PATH_EXPORT, /export PATH="\$HOME\/\.local\/bin:\$HOME\/\.ak\/bin:\$PATH"/);
+
+  const script = "ak kit install engineer --target codex --global";
+  const defaultArgs = sshInvocationArgs("user@vps", script);
+  assert.equal(defaultArgs.length, 3);
+  assert.equal(defaultArgs[0], "--");
+  assert.equal(defaultArgs[1], "user@vps");
+  assert.match(defaultArgs[2], /^bash -lc '/);
+  assert.match(defaultArgs[2], /export PATH="\$HOME\/\.local\/bin:\$HOME\/\.ak\/bin:\$PATH"; ak kit install/);
+
+  const batchArgs = sshInvocationArgs("user@vps", script, { batchMode: true });
+  assert.deepEqual(batchArgs.slice(0, 4), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+  assert.equal(batchArgs[4], "--");
+  assert.equal(batchArgs[5], "user@vps");
+  assert.equal(batchArgs[6], defaultArgs[2]);
+
+  const formatted = formatSshCommand("user@vps", script);
+  assert.match(formatted, /^ssh -- user@vps 'bash -lc /);
 });

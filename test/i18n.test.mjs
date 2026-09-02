@@ -60,4 +60,14 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.match(t("vi", "unsafeCwd", { cwd: "/tmp/project" }), /\/tmp\/project/);
   assert.match(t("en", "linkedNativeDestination", { path: "/tmp/project/AGENTS.md" }), /symlink/);
   assert.match(t("vi", "linkedNativeDestination", { path: "/tmp/project/AGENTS.md" }), /symlink/);
+  assert.equal(t("en", "vpsScope"), "Remote VPS via SSH");
+  assert.equal(t("vi", "vpsScope"), "Quản lý Kit trên VPS qua SSH");
+  assert.match(t("en", "vpsHostPrompt"), /SSH host/);
+  assert.match(t("vi", "vpsHostPrompt"), /Địa chỉ SSH/);
+  assert.match(t("en", "vpsProbing", { host: "1.2.3.4" }), /Probing remote VPS \(1\.2\.3\.4\)/);
+  assert.match(t("vi", "vpsProbing", { host: "1.2.3.4" }), /Đang kiểm tra kết nối VPS \(1\.2\.3\.4\)/);
+  assert.match(t("en", "vpsAkMissing", { host: "1.2.3.4" }), /ak CLI is not installed on remote host 1\.2\.3\.4/);
+  assert.match(t("vi", "vpsAkMissing", { host: "1.2.3.4" }), /CLI ak chưa được cài đặt trên máy chủ 1\.2\.3\.4/);
+  assert.match(t("en", "vpsBootstrapPrompt", { host: "1.2.3.4" }), /Install ak on 1\.2\.3\.4/);
+  assert.match(t("vi", "vpsBootstrapPrompt", { host: "1.2.3.4" }), /Cài đặt ak trên 1\.2\.3\.4/);
 });

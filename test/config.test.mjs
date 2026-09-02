@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readProjectConfig, writeProjectConfig } from "../lib/config.mjs";
+import {
+  addRecentVpsHost,
+  readGlobalHelperConfig,
+  readProjectConfig,
+  writeGlobalHelperConfig,
+  writeProjectConfig,
+} from "../lib/config.mjs";
 
 test("round-trips a secret-free project choice", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-config-"));
@@ -95,6 +101,36 @@ test("refuses a symlinked project config without changing its target", { skip: p
       /refusing symlinked helper config/,
     );
     assert.equal(await readFile(external, "utf8"), "unchanged\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("round-trips global helper config with capped recent hosts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-global-"));
+  try {
+    const initial = await readGlobalHelperConfig({ home: directory });
+    assert.deepEqual(initial, {
+      schemaVersion: 1,
+      vps: { defaultHost: null, recentHosts: [] },
+    });
+
+    await addRecentVpsHost("user@host1", { home: directory });
+    await addRecentVpsHost("user@host2", { home: directory });
+    await addRecentVpsHost("user@host1", { home: directory }); // dedupe and bump to front
+
+    const updated = await readGlobalHelperConfig({ home: directory });
+    assert.equal(updated.vps.defaultHost, "user@host1");
+    assert.deepEqual(updated.vps.recentHosts, ["user@host1", "user@host2"]);
+
+    // Add 10 more to verify cap of 10
+    for (let index = 3; index <= 15; index += 1) {
+      await addRecentVpsHost(`user@host${index}`, { home: directory });
+    }
+    const capped = await readGlobalHelperConfig({ home: directory });
+    assert.equal(capped.vps.recentHosts.length, 10);
+    assert.equal(capped.vps.recentHosts[0], "user@host15");
+    assert.equal(capped.vps.defaultHost, "user@host15");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

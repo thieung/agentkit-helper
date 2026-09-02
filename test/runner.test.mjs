@@ -4,6 +4,7 @@ import {
   isLinkedNativeDestinationError,
   linkedNativeDestinationPath,
   requiresForceConsent,
+  resolveSshBinary,
   spawnInvocation,
   summarizeCommandFailure,
 } from "../lib/runner.mjs";
@@ -78,4 +79,16 @@ test("requires separate force consent only for overwrite or drift failures", () 
     exitCode: 1,
     message: "network unavailable",
   }), false);
+});
+
+test("resolveSshBinary respects AK_HELPER_SSH_BIN", () => {
+  assert.equal(resolveSshBinary(), process.env.AK_HELPER_SSH_BIN || "ssh");
+  const previous = process.env.AK_HELPER_SSH_BIN;
+  try {
+    process.env.AK_HELPER_SSH_BIN = "custom-ssh";
+    assert.equal(resolveSshBinary(), "custom-ssh");
+  } finally {
+    if (previous) process.env.AK_HELPER_SSH_BIN = previous;
+    else delete process.env.AK_HELPER_SSH_BIN;
+  }
 });

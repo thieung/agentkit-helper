@@ -60,6 +60,7 @@ test("parses an explicit project install", () => {
     maxDepth: 5,
     maxDepthChanged: false,
     excludes: [],
+    sshTarget: null,
   });
 });
 
@@ -136,6 +137,7 @@ test("accepts runtime as an alias of target", () => {
     maxDepth: 5,
     maxDepthChanged: false,
     excludes: [],
+    sshTarget: null,
   });
 });
 
@@ -243,4 +245,33 @@ test("accepts Marketing Kit for Kit operations", () => {
   assert.throws(() => parseArgs([
     "self-update", "--kit", "marketing", "--channel", "stable",
   ]), /self-update accepts/);
+});
+
+test("parses --ssh and --vps and enforces remote global scope rules", () => {
+  const parsed = parseArgs(["install", "--ssh", "user@host", "--target", "codex"]);
+  assert.equal(parsed.sshTarget, "user@host");
+  assert.equal(parsed.global, true);
+  assert.equal(isDetectUpdate(parsed), false);
+
+  const parsedVps = parseArgs(["update", "--vps", "user@my-vps", "--runtime", "omp"]);
+  assert.equal(parsedVps.sshTarget, "user@my-vps");
+  assert.equal(parsedVps.global, true);
+  assert.equal(isDetectUpdate(parsedVps), false);
+
+  assert.throws(
+    () => parseArgs(["install", "--ssh", "user@host", "--project", "/tmp/demo"]),
+    /cannot be used together|--ssh is valid only with global/,
+  );
+  assert.throws(
+    () => parseArgs(["install", "--ssh", "user@host", "--target", "pi-ak"]),
+    /--ssh does not support custom profile targets/,
+  );
+  assert.throws(
+    () => parseArgs(["doctor", "--ssh", "user@host"]),
+    /--ssh is valid only with install and update/,
+  );
+  assert.throws(
+    () => parseArgs(["update", "--ssh", "user@host", "--all"]),
+    /--all cannot be combined with project, global, target, or binary-only|--ssh cannot be combined with --all/,
+  );
 });

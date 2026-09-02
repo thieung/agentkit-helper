@@ -8,6 +8,7 @@ import {
   discoverGlobalKitInstalls,
   discoverProjectCandidates,
   parseProjectRegistry,
+  parseRemoteProbeOutput,
   scanForOwnedProjects,
 } from "../lib/discovery.mjs";
 
@@ -130,4 +131,53 @@ test("discovery deduplicates current, registry, and deep-scan projects", async (
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("parseRemoteProbeOutput ignores MOTD and parses binary info and installed manifests", () => {
+  const rawOutput = `
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-40-generic x86_64)
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+Last login: Wed Sep  2 20:00:00 2026 from 1.2.3.4
+===AK_PROBE===
+AK_PATH:/home/ubuntu/.local/bin/ak
+AK_VERSION:ak 2.15.0-beta.3
+INSTALLED:engineer:codex
+INSTALLED:engineer:omp
+INSTALLED:marketing:codex
+`;
+  const parsed = parseRemoteProbeOutput(rawOutput);
+  assert.equal(parsed.reachable, true);
+  assert.equal(parsed.akInstalled, true);
+  assert.equal(parsed.akPath, "/home/ubuntu/.local/bin/ak");
+  assert.equal(parsed.akVersion, "2.15.0-beta.3");
+  assert.equal(parsed.channel, "beta");
+  assert.deepEqual(parsed.installs, [
+    { kit: "engineer", runtimes: ["codex", "omp"] },
+    { kit: "marketing", runtimes: ["codex"] },
+  ]);
+});
+
+test("parseRemoteProbeOutput handles missing remote ak binary", () => {
+  const rawOutput = `
+===AK_PROBE===
+AK_PATH:
+AK_VERSION:
+`;
+  const parsed = parseRemoteProbeOutput(rawOutput);
+  assert.equal(parsed.reachable, true);
+  assert.equal(parsed.akInstalled, false);
+  assert.equal(parsed.akPath, null);
+  assert.equal(parsed.akVersion, null);
+  assert.equal(parsed.channel, "stable");
+  assert.deepEqual(parsed.installs, []);
+});
+
+test("parseRemoteProbeOutput throws on missing probe marker", () => {
+  assert.throws(
+    () => parseRemoteProbeOutput("Permission denied (publickey).\n"),
+    /missing probe marker/,
+  );
 });
