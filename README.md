@@ -30,13 +30,14 @@ In the TUI, use:
 - Enter to confirm
 - Esc to return to the previous step
 
-Choose a project or user/global scope, Engineer or Marketing Kit, one or more
-runtimes, and the Stable or Beta channel. **Sync** scans once, shows the
-installed `ak` binary plus detected Kits, then confirms before running. When the current directory is a safe
-project path (not `/` or your home directory), the TUI offers **Use current
-project**; the equivalent CLI flag is `--project .`. AgentKit remains
-responsible for Kit verification, ownership, snapshots, and runtime-specific
-files.
+The TUI has two main actions: **Update** and **Install a Kit**. Update detects
+the `ak` binary, global Kits, and this project's Kits when AgentKit owns the
+current directory. Install asks for project or user/global scope, Engineer or
+Marketing Kit, runtimes, and Stable or Beta. **More** hides export, doctor, and
+update-all. When the current directory is a safe project path (not `/` or your
+home directory), Install offers **Use current project**; the equivalent CLI
+flag is `--project .`. AgentKit remains responsible for Kit verification,
+ownership, snapshots, and runtime-specific files.
 
 For global install, the helper first runs without `--force`. If the target
 already exists or drift is detected, the TUI shows a WARNING and asks for
@@ -56,8 +57,9 @@ machine):
 1. Install `ak` with `irm https://agentkit.best/install.ps1 | iex`, then open a
    new terminal.
 2. Run `npx --yes @thieung/agentkit-helper` (or `akh` after a global npm install).
-3. In the TUI, choose **Use current project** (or `akh install --project .`).
-4. Install one runtime, then run `update-all` for that install.
+3. In the TUI, choose **Install a Kit**, then **Use current project** (or
+   `akh install --project .`).
+4. Install one runtime, then run `akh update`.
 
 <details>
 <summary><strong>Advanced CLI usage</strong></summary>
@@ -76,34 +78,24 @@ akh install --global --kit engineer \
   --runtime codex,omp,pi --channel stable
 ```
 
-Update Kit installs or only the signed `ak` binary:
+Update:
 
 ```bash
+akh update
 akh update --project /path/to/project
-akh update-all --channel stable
-akh self-update --channel stable
-akh sync
+akh update --all --channel stable
+akh update --dry-run
 ```
 
-`akh sync` uses the channel of the installed `ak` binary. From `/` or your home
-directory it updates that binary and **every globally installed runtime** it
-detects (`claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, plus
-`pi-ak`/`pi-omp` profiles when present). From an AgentKit-owned project it also
-updates that project's Kits. CLI one-shot applies immediately; `akh sync --dry-run`
-previews only.
+`akh update` uses the channel of the installed `ak` binary unless `--channel`
+is set. From `/` or your home directory it updates that binary and **every
+globally installed runtime** it detects (`claude-code`, `codex`, `cursor`,
+`dsh`, `grok`, `omp`, `pi`, plus `pi-ak`/`pi-omp` profiles when present). From
+an AgentKit-owned project it also updates that project's Kits. CLI one-shot
+applies immediately; `akh update --dry-run` previews only. `akh update --all`
+adds registered projects and optional deep scan.
 
-Preview without applying changes:
-
-```bash
-akh update --project /path/to/project --dry-run
-akh sync --dry-run
-```
-
-Targets:
-
-- Install: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
-- Update: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
-- Export: `agy`, `portable`
+Runtimes: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
 
 `dsh` updates use `ak kit refresh` because remote `ak update` still rejects that runtime. `pi-ak` and `pi-omp` are global-only profile aliases (`--global`); they install/update into the custom Pi/OMP homes instead of the default `pi`/`omp` directories.
 

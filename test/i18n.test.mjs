@@ -5,7 +5,10 @@ import { t } from "../lib/i18n.mjs";
 test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.equal(t("vi", "installAction"), "Cài Kit");
   assert.equal(t("en", "installAction"), "Install a Kit");
-  assert.equal(t("vi", "marketingKit"), "Marketing Kit");
+  assert.equal(t("vi", "updateAction"), "Cập nhật");
+  assert.equal(t("en", "updateAction"), "Update");
+  assert.equal(t("vi", "moreAction"), "Khác");
+  assert.equal(t("en", "morePrompt"), "Advanced");
   assert.match(t("vi", "targetPrompt", { kit: "Marketing Kit" }), /Marketing Kit/);
   assert.equal(t("vi", "allRuntimes"), "Tất cả runtime được hỗ trợ");
   assert.match(t("vi", "piAkProfile"), /pi-ak/);

@@ -5,6 +5,7 @@ import {
   HELPER_INSTALL_TARGETS,
   HELPER_UPDATE_TARGETS,
   INSTALL_TARGETS,
+  isDetectUpdate,
   PROFILE_TARGETS,
   RUNTIME_TARGETS,
   parseArgs,
@@ -48,6 +49,7 @@ test("parses an explicit project install", () => {
     language: null,
     out: null,
     binaryOnly: false,
+    all: false,
     allowDowngrade: false,
     dryRun: false,
     yes: true,
@@ -123,6 +125,7 @@ test("accepts runtime as an alias of target", () => {
     language: null,
     out: null,
     binaryOnly: false,
+    all: false,
     allowDowngrade: false,
     dryRun: false,
     yes: false,
@@ -169,7 +172,7 @@ test("parses bounded update-all discovery options", () => {
   assert.deepEqual(options.deepScanRoots, ["~/projects", "/work"]);
   assert.equal(options.maxDepth, 7);
   assert.deepEqual(options.excludes, ["archive", "vendor", "fixtures"]);
-  assert.throws(() => parseArgs(["install", "--deep-scan", "/work"]), /only with update-all/);
+  assert.throws(() => parseArgs(["install", "--deep-scan", "/work"]), /only with update --all/);
   assert.throws(() => parseArgs(["update-all", "--max-depth", "0"]), /integer from 1 to 20/);
   assert.throws(() => parseArgs(["update-all", "--project", "/work"]), /update-all accepts/);
 });
@@ -202,6 +205,17 @@ test("sync infers channel from the binary and rejects scope overrides", () => {
   assert.throws(() => parseArgs(["sync", "--project", "/tmp/demo"]), /infers channel/);
   assert.throws(() => parseArgs(["sync", "--global"]), /infers channel/);
   assert.throws(() => parseArgs(["sync", "--deep-scan", "/tmp/demo"]), /infers channel/);
+});
+
+test("bare update detects cwd and global installs", () => {
+  assert.equal(isDetectUpdate(parseArgs(["update"])), true);
+  assert.equal(parseArgs(["update", "--channel", "beta"]).channel, "beta");
+  assert.equal(parseArgs(["update", "--all"]).all, true);
+  assert.equal(isDetectUpdate(parseArgs(["update", "--all"])), false);
+  assert.equal(isDetectUpdate(parseArgs(["update", "--project", "/tmp/demo"])), false);
+  assert.throws(() => parseArgs(["update", "--all", "--project", "/tmp/demo"]), /cannot be combined/);
+  assert.throws(() => parseArgs(["install", "--all"]), /only with update/);
+  assert.deepEqual(parseArgs(["update", "--all", "--deep-scan", "/work"]).deepScanRoots, ["/work"]);
 });
 
 test("rejects custom Pi profiles on project scope", () => {

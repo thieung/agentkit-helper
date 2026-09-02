@@ -29,12 +29,13 @@ Trong TUI, dùng:
 - Enter để xác nhận
 - Esc để trở về bước trước
 
-Bạn chỉ cần chọn scope project hoặc user/global, Engineer hoặc Marketing Kit,
-một hay nhiều runtime và release channel Stable hoặc Beta. **Sync** scan một lần,
-hiện binary `ak` đang cài cùng các Kit đã detect, rồi hỏi confirm trước khi chạy.
-Khi thư mục hiện tại là project hợp lệ (không phải `/` hay home), TUI có **Dùng
-project hiện tại**; CLI tương đương là `--project .`. AgentKit vẫn quản lý việc
-xác minh Kit, ownership, snapshot và file riêng của từng runtime.
+TUI có hai việc chính: **Cập nhật** và **Cài Kit**. Cập nhật detect binary `ak`,
+Kit global, và Kit của project hiện tại khi AgentKit sở hữu thư mục đó. Cài Kit
+hỏi scope project hoặc user/global, Engineer hoặc Marketing Kit, runtime, và
+Stable hoặc Beta. **Khác** ẩn export, doctor và cập nhật tất cả. Khi thư mục
+hiện tại là project hợp lệ (không phải `/` hay home), Cài Kit có **Dùng project
+hiện tại**; CLI tương đương là `--project .`. AgentKit vẫn quản lý việc xác minh
+Kit, ownership, snapshot và file riêng của từng runtime.
 
 Khi cài global scope, helper chạy trước mà không có `--force`. Nếu target đã
 tồn tại hoặc có drift, TUI hiển thị WARNING và hỏi consent riêng, mặc định No.
@@ -53,8 +54,9 @@ máy thật):
    mới.
 2. Chạy `npx --yes @thieung/agentkit-helper` (hoặc `akh` sau khi npm install
    global).
-3. Trong TUI, chọn **Dùng project hiện tại** (hoặc `akh install --project .`).
-4. Cài một runtime, rồi chạy `update-all` cho install đó.
+3. Trong TUI, chọn **Cài Kit**, rồi **Dùng project hiện tại** (hoặc
+   `akh install --project .`).
+4. Cài một runtime, rồi chạy `akh update`.
 
 <details>
 <summary><strong>Cách dùng CLI nâng cao</strong></summary>
@@ -73,33 +75,23 @@ akh install --global --kit engineer \
   --runtime codex,omp,pi --channel stable
 ```
 
-Cập nhật Kit install hoặc chỉ cập nhật signed `ak` binary:
+Cập nhật:
 
 ```bash
+akh update
 akh update --project /path/to/project
-akh update-all --channel stable
-akh self-update --channel stable
-akh sync
+akh update --all --channel stable
+akh update --dry-run
 ```
 
-`akh sync` dùng channel của `ak` binary đang cài. Ở `/` hoặc home thì cập nhật
-binary và **mọi runtime đã cài global** mà helper detect được (`claude-code`,
-`codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, kèm profile `pi-ak`/`pi-omp` nếu
-có). Ở project do AgentKit sở hữu thì cập nhật thêm Kit của project đó. CLI
-one-shot áp dụng ngay; `akh sync --dry-run` chỉ preview.
+`akh update` dùng channel của `ak` binary đang cài trừ khi có `--channel`. Ở
+`/` hoặc home thì cập nhật binary và **mọi runtime đã cài global** mà helper
+detect được (`claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, kèm
+profile `pi-ak`/`pi-omp` nếu có). Ở project do AgentKit sở hữu thì cập nhật
+thêm Kit của project đó. CLI one-shot áp dụng ngay; `akh update --dry-run` chỉ
+preview. `akh update --all` thêm project trong registry và deep scan tùy chọn.
 
-Preview mà không áp dụng thay đổi:
-
-```bash
-akh update --project /path/to/project --dry-run
-akh sync --dry-run
-```
-
-Các target:
-
-- Cài đặt: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
-- Cập nhật: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
-- Export: `agy`, `portable`
+Runtime: `claude-code`, `codex`, `cursor`, `dsh`, `grok`, `omp`, `pi`, `pi-ak`, `pi-omp`
 
 Update `dsh` đi qua `ak kit refresh` vì `ak update` remote vẫn reject runtime này. `pi-ak` và `pi-omp` là alias profile chỉ dùng với `--global`; chúng cài/cập nhật vào home Pi/OMP custom, không phải thư mục `pi`/`omp` mặc định.
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   EXPORT_TARGETS,
   helperRuntimeTargets,
+  isDetectUpdate,
   KITS,
   parseArgs,
   PROFILE_TARGETS,
@@ -126,76 +127,62 @@ function usage(language = "en") {
     process.stdout.write(`AgentKit Helper ${metadata.version}
 
 Cách dùng:
-  agentkit-helper install [tùy chọn]
-  agentkit-helper update [tùy chọn]
-  agentkit-helper self-update [tùy chọn]
-  agentkit-helper update-all [tùy chọn]
-  agentkit-helper sync [tùy chọn]
-  agentkit-helper export [tùy chọn]
-  agentkit-helper doctor [--project <đường-dẫn>]
+  akh
+  akh install [tùy chọn]
+  akh update [tùy chọn]
+  akh doctor [--project <đường-dẫn>]
+
+Không có command thì mở TUI: Cài Kit hoặc Cập nhật.
+akh update detect binary ak, Kit global, và Kit của project hiện tại nếu AgentKit sở hữu.
+akh update --all cập nhật thêm project trong registry.
+akh update --project <đường-dẫn> cập nhật một project.
 
 Tùy chọn:
-  --project <đường-dẫn>  Dùng project scope tại đường dẫn này
-  --global               Dùng scope user/global của runtime
-  --target <targets>     Các runtime phân cách dấu phẩy cho install/update, hoặc một export target
-  --runtime <runtimes>   Alias của --target nhưng chỉ cho runtime install/update
+  --project <đường-dẫn>  Project scope
+  --global               Scope user/global
+  --runtime <runtimes>   Runtime, phân cách dấu phẩy
   --kit <kit>            engineer hoặc marketing
   --channel <channel>    stable hoặc beta
-  --language <vi|en>     Ngôn ngữ giao diện helper
+  --language <vi|en>     Ngôn ngữ giao diện
+  --all                  Cập nhật mọi install đã detect
   --out <đường-dẫn>      Thư mục output cho portable export
-  --binary-only          Chỉ cập nhật binary ak
-  --allow-downgrade      Cho phép downgrade khi dùng cùng --yes
-  --deep-scan <thư-mục> Deep scan thư mục cha (có thể lặp lại; chỉ update-all)
-  --max-depth <1-20>     Độ sâu deep scan, mặc định 5
-  --exclude <tên,...>   Bỏ qua thêm các tên thư mục khi deep scan
-  --dry-run              Lập kế hoạch/xem trước, không thay đổi
-  --yes, -y              Bỏ qua bước xác nhận của helper
-  --no-save              Không ghi .ak-kit.json
+  --dry-run              Xem trước, không thay đổi
+  --yes, -y              Bỏ qua xác nhận
   --help, -h             Hiện trợ giúp
   --version, -v          Hiện phiên bản
 
-Target groups:
-  Install                claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
-  Update                 claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
-  Export                 agy, portable
+Runtime: claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
 `);
     return;
   }
   process.stdout.write(`AgentKit Helper ${metadata.version}
 
 Usage:
-  agentkit-helper install [options]
-  agentkit-helper update [options]
-  agentkit-helper self-update [options]
-  agentkit-helper update-all [options]
-  agentkit-helper sync [options]
-  agentkit-helper export [options]
-  agentkit-helper doctor [--project <path>]
+  akh
+  akh install [options]
+  akh update [options]
+  akh doctor [--project <path>]
+
+No command opens the TUI: Install a Kit or Update.
+akh update detects the ak binary, global Kits, and this project if AgentKit owns it.
+akh update --all also updates registered projects.
+akh update --project <path> updates one project.
 
 Options:
-  --project <path>       Use project scope at this path
-  --global               Use the runtime user/global scope
-  --target <targets>     Comma-separated runtimes for install/update, or one export target
-  --runtime <runtimes>   Alias of --target for install/update runtimes only
+  --project <path>       Project scope
+  --global               Runtime user/global scope
+  --runtime <runtimes>   Comma-separated runtimes
   --kit <kit>            engineer or marketing
   --channel <channel>    stable or beta
   --language <vi|en>     Helper interface language
+  --all                  Update every detected install
   --out <path>           Output directory for portable export
-  --binary-only          Update only the ak binary
-  --allow-downgrade      Permit downgrade when also used with --yes
-  --deep-scan <path>     Deep scan a parent path (repeatable; update-all only)
-  --max-depth <1-20>     Deep scan depth, default 5
-  --exclude <name,...>   Additional directory names to skip during deep scan
-  --dry-run              Plan or preview without mutation
+  --dry-run              Preview without mutation
   --yes, -y              Skip helper confirmation
-  --no-save              Do not write .ak-kit.json
   --help, -h             Show help
   --version, -v          Show version
 
-Target groups:
-  Install                claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
-  Update                 claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
-  Export                 agy, portable
+Runtimes: claude-code, codex, cursor, dsh, grok, omp, pi, pi-ak, pi-omp
 `);
 }
 
@@ -275,19 +262,24 @@ async function checkInteractiveBinaryUpdate() {
 }
 
 async function chooseCommand(allowLanguageBack = false) {
-  const choices = [
-    { label: ui("syncAction"), value: "sync" },
-    { label: ui("selfUpdateAction"), value: "self-update" },
-    { label: ui("installAction"), value: "install" },
-    { label: ui("updateAction"), value: "update" },
-    { label: ui("updateAllAction"), value: "update-all" },
-    { label: ui("exportAction"), value: "export" },
-    { label: ui("doctorAction"), value: "doctor" },
-  ];
-  const defaultIndex = 0;
-  return allowLanguageBack
-    ? chooseWithBack(ui("commandPrompt"), choices, defaultIndex, ui("escapeBack"))
-    : choose(ui("commandPrompt"), choices, defaultIndex);
+  while (true) {
+    const choices = [
+      { label: ui("updateAction"), value: "update" },
+      { label: ui("installAction"), value: "install" },
+      { label: ui("moreAction"), value: "more" },
+    ];
+    const selected = allowLanguageBack
+      ? await chooseWithBack(ui("commandPrompt"), choices, 0, ui("escapeBack"))
+      : await choose(ui("commandPrompt"), choices, 0);
+    if (selected !== "more") return selected;
+    const extra = [
+      { label: ui("updateAllAction"), value: "update-all" },
+      { label: ui("exportAction"), value: "export" },
+      { label: ui("doctorAction"), value: "doctor" },
+    ];
+    const nested = await chooseWithBack(ui("morePrompt"), extra, 0, ui("escapeBack"));
+    if (nested !== BACK) return nested;
+  }
 }
 
 function kitName(kit) {
@@ -1268,7 +1260,7 @@ async function applySyncBinary(channel) {
 }
 
 async function sync(commandOptions, interactive = false) {
-  const channel = syncChannelFromBinary(installedAkVersion);
+  const channel = commandOptions.channel || syncChannelFromBinary(installedAkVersion);
   const inventory = await loadSyncInventory();
   for (const warning of inventory.warnings) {
     process.stderr.write(`${ui("discoveryWarning", { message: warning })}\n`);
@@ -1445,7 +1437,11 @@ async function main() {
         result = await install(options, interactiveRoot);
         break;
       case "update":
-        result = await update(options, interactiveRoot);
+        result = options.all
+          ? await updateAll(options, interactiveRoot)
+          : isDetectUpdate(options)
+            ? await sync(options, interactiveRoot)
+            : await update(options, interactiveRoot);
         break;
       case "self-update":
         result = await selfUpdate(options, interactiveRoot);

@@ -37,6 +37,18 @@ test("package exposes both npm binary names", () => {
   });
 });
 
+test("help leads with akh install and update", async () => {
+  const result = await runCli(["--help"], { AK_HELPER_AK_BIN: "ak-not-needed" });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^AgentKit Helper /);
+  assert.match(result.stdout, /\n  akh\n/);
+  assert.match(result.stdout, /\n  akh install /);
+  assert.match(result.stdout, /\n  akh update /);
+  assert.doesNotMatch(result.stdout, /self-update/);
+  assert.doesNotMatch(result.stdout, /update-all/);
+  assert.doesNotMatch(result.stdout, /akh sync/);
+});
+
 test("bare interactive mode fails closed outside a TTY", async () => {
   const result = await runCli([], { AK_HELPER_AK_BIN: "ak-not-needed" });
 
@@ -742,6 +754,19 @@ if (args[0] === "self-update" && args.includes("--json")) {
       ["update", "--global", "--kits", "engineer", "--target", "grok", "--channel", "beta", "--yes", "--verbose"],
       ["update", canonicalProject, "--kits", "engineer", "--target", "codex", "--channel", "beta", "--yes", "--verbose"],
     ]);
+    await writeFile(log, "");
+    const updated = await runCli(["update"], {
+      AK_HELPER_AK_BIN: fakeAk,
+      AK_HELPER_TEST_LOG: log,
+      AGENTKIT_HOME: akHome,
+      AK_HELPER_HOME: home,
+      HOME: home,
+    }, project);
+    assert.equal(updated.code, 0, updated.stderr);
+    assert.deepEqual(
+      (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse),
+      calls,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
