@@ -356,12 +356,9 @@ async function selectVpsHost(allowBack = false) {
 
   let probe;
   try {
-    await runSsh(host, "true", { stdio: "inherit" });
-    probe = await withSpinner(
-      ui("vpsProbing", { host }),
-      ui("vpsProbed", { host }),
-      () => probeRemoteVps(host),
-    );
+    process.stdout.write(`${colorText(`  ${ui("vpsProbing", { host })}`, "prompt")}\n`);
+    probe = await probeRemoteVps(host);
+    process.stdout.write(`${colorText(`  ${ui("vpsProbed", { host })}`, "prompt")}\n`);
   } catch (error) {
     warning(error.message);
     throw error;
@@ -565,9 +562,6 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
   const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
   let probe = scope.probe;
   if (!probe) {
-    if (!batchMode) {
-      await runSsh(sshTarget, "true", { stdio: "inherit" });
-    }
     probe = await probeRemoteVps(sshTarget, { batchMode });
     if (!probe.akInstalled) {
       if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
@@ -610,7 +604,7 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
   printSection(ui("installPlan"));
   for (const target of targets) {
     const args = installArgs({ global: true, target, channel, kit });
-    const remoteScript = formatCommand("ak", args);
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
     process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
     process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
   }
@@ -627,7 +621,7 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
 
   for (const target of targets) {
     const args = installArgs({ global: true, target, channel, kit });
-    const remoteScript = formatCommand("ak", args);
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
     try {
       await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
     } catch (error) {
@@ -643,7 +637,7 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
       }
       const forceArgs = installArgs({ global: true, target, channel, kit }, { force: true });
       printSection(ui("forceInstallPlan"));
-      const forceScript = formatCommand("ak", forceArgs);
+      const forceScript = formatCommand("ak", forceArgs, { platform: "linux" });
       process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
       process.stdout.write(`${colorText(`  ${forceScript}`, "planDetail")}\n`);
       await runSsh(sshTarget, forceScript, { stdio: "inherit", batchMode });
@@ -661,10 +655,10 @@ async function install(commandOptions, allowBack = false) {
     const scopeWasPrompted = needsScopePrompt(commandOptions);
     const routeCanGoBack = allowBack || scopeWasPrompted;
     scope = await selectScope("install", commandOptions, allowBack);
+    if (scope === BACK) return BACK;
     if (scope.sshTarget) {
       return executeRemoteInstall(commandOptions, scope, allowBack);
     }
-    if (scope === BACK) return BACK;
     const config = scope.project ? await readProjectConfig(scope.project) : null;
     route = await walkSelections([
       { key: "kit", select: () => selectKit(commandOptions, config, routeCanGoBack, allowBack) },
@@ -879,9 +873,6 @@ async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
   const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
   let probe = scope.probe;
   if (!probe) {
-    if (!batchMode) {
-      await runSsh(sshTarget, "true", { stdio: "inherit" });
-    }
     probe = await probeRemoteVps(sshTarget, { batchMode });
     if (!probe.akInstalled) {
       if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
@@ -960,7 +951,7 @@ async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
 
   printSection(ui("updatePlan"));
   for (const args of commands) {
-    const remoteScript = formatCommand("ak", args);
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
     process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
     process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
   }
@@ -976,7 +967,7 @@ async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
   }
 
   for (const args of commands) {
-    const remoteScript = formatCommand("ak", args);
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
     await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
   }
 
