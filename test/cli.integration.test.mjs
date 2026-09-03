@@ -44,6 +44,10 @@ test("help leads with akh install and update", async () => {
   assert.match(result.stdout, /\n  akh\n/);
   assert.match(result.stdout, /\n  akh install /);
   assert.match(result.stdout, /\n  akh update /);
+  assert.match(result.stdout, /--ssh <host>/);
+  const viResult = await runCli(["--help", "--language", "vi"], { AK_HELPER_AK_BIN: "ak-not-needed" });
+  assert.equal(viResult.code, 0, viResult.stderr);
+  assert.match(viResult.stdout, /--ssh <host>/);
   assert.doesNotMatch(result.stdout, /self-update/);
   assert.doesNotMatch(result.stdout, /update-all/);
   assert.doesNotMatch(result.stdout, /akh sync/);
@@ -1190,6 +1194,179 @@ if (args[0] === "--version") process.stdout.write("ak 2.14.0\\n");
       "kit", "install", "engineer", "--target", "pi", "--global", "--channel", "stable", "--yes", "--verbose",
     ]);
     assert.match(installs[0].agentDir, /pi-ak$/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("remote install delegates ak kit install over SSH, unexpanded $HOME, and saves recent host", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-install-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  const log = join(directory, "ssh.log");
+  const helperHome = join(directory, "home");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_SSH_LOG, JSON.stringify(args) + "\\n");
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("===AK_PROBE===\\nAK_PATH:/home/ubuntu/.local/bin/ak\\nAK_VERSION:ak 2.15.0-beta.3\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "install", "--ssh", "ubuntu@10.0.0.1", "--kit", "engineer", "--runtime", "codex", "--channel", "beta", "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+      AK_HELPER_TEST_SSH_LOG: log,
+      AK_HELPER_HOME: helperHome,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(calls.length, 2); // probe + install
+    assert.deepEqual(calls[0].slice(0, 4), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+    assert.deepEqual(calls[1].slice(0, 4), ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+
+    // Verify probe args
+    assert.match(calls[0][calls[0].length - 1], /^bash -lc /);
+    assert.match(calls[0][calls[0].length - 1], /export PATH="\$HOME\/\.local\/bin:\$HOME\/\.ak\/bin:\$PATH"/);
+    const probeHostIdx = calls[0].indexOf("ubuntu@10.0.0.1");
+    assert.equal(calls[0][probeHostIdx - 1], "--");
+
+    // Verify install args
+    const installCmd = calls[1][calls[1].length - 1];
+    assert.match(installCmd, /^bash -lc /);
+    assert.match(installCmd, /ak kit install engineer --target codex --global --channel beta --yes --verbose/);
+    const installHostIdx = calls[1].indexOf("ubuntu@10.0.0.1");
+    assert.equal(calls[1][installHostIdx - 1], "--");
+
+    // Verify config persistence
+    const savedConfig = JSON.parse(await readFile(join(helperHome, ".agentkit-helper", "config.json"), "utf8"));
+    assert.equal(savedConfig.vps.defaultHost, "ubuntu@10.0.0.1");
+    assert.deepEqual(savedConfig.vps.recentHosts, ["ubuntu@10.0.0.1"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("remote update delegates ak update for installed runtimes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-update-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  const log = join(directory, "ssh.log");
+  const helperHome = join(directory, "home");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_SSH_LOG, JSON.stringify(args) + "\\n");
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("===AK_PROBE===\\nAK_PATH:/home/ubuntu/.local/bin/ak\\nAK_VERSION:ak 2.15.0\\nINSTALLED:engineer:codex\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "update", "--ssh", "ubuntu@10.0.0.2", "--runtime", "codex", "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+      AK_HELPER_TEST_SSH_LOG: log,
+      AK_HELPER_HOME: helperHome,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(calls.length, 2); // probe + update
+    const updateCmd = calls[1][calls[1].length - 1];
+    assert.match(updateCmd, /ak update --global --kits engineer --target codex --channel stable --yes --verbose/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("remote update refuses uninstalled runtimes fail-closed without calling remote ak update", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-missing-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  const log = join(directory, "ssh.log");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_SSH_LOG, JSON.stringify(args) + "\\n");
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("===AK_PROBE===\\nAK_PATH:/home/ubuntu/.local/bin/ak\\nAK_VERSION:ak 2.15.0\\nINSTALLED:engineer:codex\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "update", "--ssh", "ubuntu@10.0.0.3", "--runtime", "cursor", "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+      AK_HELPER_TEST_SSH_LOG: log,
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /not installed globally for cursor/);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(calls.length, 1); // probe ONLY, remote ak update was never called!
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("remote update tolerates MOTD banners preceding probe marker", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-motd-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  const log = join(directory, "ssh.log");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("Welcome to Ubuntu 24.04 LTS!\\nNotice: Authorized access only.\\n===AK_PROBE===\\nAK_PATH:/home/user/.local/bin/ak\\nAK_VERSION:ak 2.15.0\\nINSTALLED:engineer:omp\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "update", "--ssh", "user@motd-vps", "--runtime", "omp", "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+      AK_HELPER_TEST_SSH_LOG: log,
+    });
+    assert.equal(result.code, 0, result.stderr);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("remote install fails closed in non-interactive mode when remote ak is missing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-no-ak-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("===AK_PROBE===\\nAK_PATH:\\nAK_VERSION:\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "install", "--ssh", "user@clean-vps", "--kit", "engineer", "--runtime", "codex", "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /The ak CLI is not installed on remote host user@clean-vps/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

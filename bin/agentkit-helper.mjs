@@ -36,11 +36,17 @@ import {
   updatePreviewArgsForRuntime,
   usesKitRefresh,
 } from "../lib/commands.mjs";
-import { readProjectConfig, writeProjectConfig } from "../lib/config.mjs";
+import {
+  addRecentVpsHost,
+  readGlobalHelperConfig,
+  readProjectConfig,
+  writeProjectConfig,
+} from "../lib/config.mjs";
 import { colorText } from "../lib/colors.mjs";
 import {
   discoverGlobalKitInstalls,
   discoverProjectCandidates,
+  probeRemoteVps,
 } from "../lib/discovery.mjs";
 import {
   buildIssueReport,
@@ -75,6 +81,7 @@ import {
   withSpinner,
 } from "../lib/prompts.mjs";
 import {
+  bootstrapRemoteAk,
   ensureAk,
   isLinkedNativeDestinationError,
   linkedNativeDestinationPath,
@@ -82,6 +89,7 @@ import {
   run,
   runCapture,
   runPipeline,
+  runSsh,
 } from "../lib/runner.mjs";
 import {
   assertInstallerVersion,
@@ -140,6 +148,7 @@ akh update --project <đường-dẫn> cập nhật một project.
 Tùy chọn:
   --project <đường-dẫn>  Project scope
   --global               Scope user/global
+  --ssh <host>           Máy chủ Linux VPS qua SSH (alias: --vps)
   --runtime <runtimes>   Runtime, phân cách dấu phẩy
   --kit <kit>            engineer hoặc marketing
   --channel <channel>    stable hoặc beta
@@ -171,6 +180,7 @@ akh update --project <path> updates one project.
 Options:
   --project <path>       Project scope
   --global               Runtime user/global scope
+  --ssh <host>           Remote Linux VPS host via SSH (alias: --vps)
   --runtime <runtimes>   Comma-separated runtimes
   --kit <kit>            engineer or marketing
   --channel <channel>    stable or beta
@@ -316,12 +326,68 @@ function supportedList(targets) {
 }
 
 function needsScopePrompt(options) {
-  return !options.binaryOnly && !options.global && !options.project && (
+  return !options.binaryOnly && !options.global && !options.project && !options.sshTarget && (
     (process.stdin.isTTY && process.stdout.isTTY) || isUnsafeProjectPath(process.cwd())
   );
 }
 
+async function selectVpsHost(allowBack = false) {
+  const globalConfig = await readGlobalHelperConfig();
+  const recentHosts = globalConfig.vps?.recentHosts || [];
+  let host;
+  if (recentHosts.length > 0) {
+    const hostChoices = recentHosts.map((h) => ({
+      label: h === globalConfig.vps?.defaultHost ? `${h} (default)` : h,
+      value: h,
+    }));
+    hostChoices.push({ label: ui("vpsEnterNewHost"), value: "__NEW__" });
+    const selected = await chooseLocalized(allowBack, ui("vpsRecentHosts"), hostChoices);
+    if (selected === BACK) return BACK;
+    if (selected === "__NEW__") {
+      host = await ask(ui("vpsHostPrompt"));
+    } else {
+      host = selected;
+    }
+  } else {
+    host = await ask(ui("vpsHostPrompt"));
+  }
+  host = String(host || "").trim();
+  if (!host) return BACK;
+
+  let probe;
+  try {
+    process.stdout.write(`${colorText(`  ${ui("vpsProbing", { host })}`, "prompt")}\n`);
+    probe = await probeRemoteVps(host);
+    process.stdout.write(`${colorText(`  ${ui("vpsProbed", { host })}`, "prompt")}\n`);
+  } catch (error) {
+    warning(error.message);
+    throw error;
+  }
+
+  if (!probe.akInstalled) {
+    warning(ui("vpsAkMissing", { host }));
+    const shouldBootstrap = await confirm(ui("vpsBootstrapPrompt", { host }), true);
+    if (!shouldBootstrap) {
+      throw new Error(ui("vpsAkMissing", { host }));
+    }
+    await withSpinner(
+      ui("vpsBootstrapping"),
+      ui("vpsBootstrapped", { host }),
+      () => bootstrapRemoteAk(host),
+    );
+    probe = await probeRemoteVps(host);
+    if (!probe.akInstalled) {
+      throw new Error(ui("vpsAkMissing", { host }));
+    }
+  }
+
+  return { host, probe };
+}
+
 async function selectScope(command, options, allowBack = false) {
+  if (options.sshTarget) {
+    return { binaryOnly: false, global: true, project: null, sshTarget: options.sshTarget };
+  }
   if (options.binaryOnly) {
     return { binaryOnly: true, global: false, project: null };
   }
@@ -351,6 +417,7 @@ async function selectScope(command, options, allowBack = false) {
     }] : []),
     { label: ui("chooseProject"), value: "project" },
     { label: ui("globalScope"), value: "global" },
+    { label: ui("vpsScope"), value: "vps" },
   ];
   if (command === "update") {
     choices.unshift({ label: ui("binaryScope"), value: "binary" });
@@ -373,6 +440,17 @@ async function selectScope(command, options, allowBack = false) {
   }
   if (scope === "global") {
     return { binaryOnly: false, global: true, project: null };
+  }
+  if (scope === "vps") {
+    const vps = await selectVpsHost(allowBack);
+    if (vps === BACK) return BACK;
+    return {
+      binaryOnly: false,
+      global: true,
+      project: null,
+      sshTarget: vps.host,
+      probe: vps.probe,
+    };
   }
   return {
     binaryOnly: false,
@@ -479,6 +557,97 @@ async function prepareBetaBinary(commandOptions, { requiresPreview = false } = {
   return { proceed: true, updated: true };
 }
 
+async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
+  const sshTarget = scope.sshTarget || commandOptions.sshTarget;
+  const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
+  let probe = scope.probe;
+  if (!probe) {
+    probe = await probeRemoteVps(sshTarget, { batchMode });
+    if (!probe.akInstalled) {
+      if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
+        warning(ui("vpsAkMissing", { host: sshTarget }));
+        if (!(await confirm(ui("vpsBootstrapPrompt", { host: sshTarget }), true))) {
+          throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+        }
+        await bootstrapRemoteAk(sshTarget);
+        probe = await probeRemoteVps(sshTarget, { batchMode: false });
+        if (!probe.akInstalled) {
+          throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+        }
+      } else {
+        throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+      }
+    }
+  }
+
+  const kit = await selectKit(commandOptions, null, allowBack);
+  if (kit === BACK) return BACK;
+
+  const availableTargets = helperRuntimeTargets({ command: "install", global: true });
+  for (const profile of PROFILE_TARGETS) availableTargets.delete(profile);
+
+  const selectedTarget = await selectTarget(
+    commandOptions,
+    null,
+    availableTargets,
+    "targetPrompt",
+    allowBack,
+    allowBack,
+    { kit: kitName(kit) },
+  );
+  if (selectedTarget === BACK) return BACK;
+
+  const channel = await selectChannel(commandOptions, null, allowBack);
+  if (channel === BACK) return BACK;
+
+  const targets = splitTargetSpec(selectedTarget);
+  printSection(ui("installPlan"));
+  for (const target of targets) {
+    const args = installArgs({ global: true, target, channel, kit });
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
+    process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
+    process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
+  }
+
+  if (commandOptions.dryRun) {
+    process.stdout.write(`\n${ui("dryRunFiles")}\n`);
+    return;
+  }
+
+  if (!(await approve(commandOptions, ui("runAk")))) {
+    process.stdout.write(`${ui("cancelledFiles")}\n`);
+    return;
+  }
+
+  for (const target of targets) {
+    const args = installArgs({ global: true, target, channel, kit });
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
+    try {
+      await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
+    } catch (error) {
+      if (!requiresForceConsent(error)) throw error;
+      warning(ui("globalForceWarning", { target }));
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        error.message = `${error.message}\n${ui("forceNeedsConsent")}`;
+        throw error;
+      }
+      if (!(await confirm(ui("confirmForceInstall"), false))) {
+        process.stdout.write(`${ui("forceInstallDeclined")}\n`);
+        return;
+      }
+      const forceArgs = installArgs({ global: true, target, channel, kit }, { force: true });
+      printSection(ui("forceInstallPlan"));
+      const forceScript = formatCommand("ak", forceArgs, { platform: "linux" });
+      process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
+      process.stdout.write(`${colorText(`  ${forceScript}`, "planDetail")}\n`);
+      await runSsh(sshTarget, forceScript, { stdio: "inherit", batchMode });
+    }
+  }
+
+  await addRecentVpsHost(sshTarget);
+  process.stdout.write(`${ui("installComplete")}\n`);
+}
+
 async function install(commandOptions, allowBack = false) {
   let scope;
   let route;
@@ -487,6 +656,9 @@ async function install(commandOptions, allowBack = false) {
     const routeCanGoBack = allowBack || scopeWasPrompted;
     scope = await selectScope("install", commandOptions, allowBack);
     if (scope === BACK) return BACK;
+    if (scope.sshTarget) {
+      return executeRemoteInstall(commandOptions, scope, allowBack);
+    }
     const config = scope.project ? await readProjectConfig(scope.project) : null;
     route = await walkSelections([
       { key: "kit", select: () => selectKit(commandOptions, config, routeCanGoBack, allowBack) },
@@ -695,6 +867,113 @@ async function downgradeBinary(commandOptions, check) {
   process.stdout.write(`${ui("downgradeComplete", { version })}\n`);
 }
 
+
+async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
+  const sshTarget = scope.sshTarget || commandOptions.sshTarget;
+  const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
+  let probe = scope.probe;
+  if (!probe) {
+    probe = await probeRemoteVps(sshTarget, { batchMode });
+    if (!probe.akInstalled) {
+      if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
+        warning(ui("vpsAkMissing", { host: sshTarget }));
+        if (!(await confirm(ui("vpsBootstrapPrompt", { host: sshTarget }), true))) {
+          throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+        }
+        await bootstrapRemoteAk(sshTarget);
+        probe = await probeRemoteVps(sshTarget, { batchMode: false });
+        if (!probe.akInstalled) {
+          throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+        }
+      } else {
+        throw new Error(ui("vpsAkMissing", { host: sshTarget }));
+      }
+    }
+  }
+
+  const kit = await selectKit(commandOptions, null, allowBack);
+  if (kit === BACK) return BACK;
+
+  const kitInstalls = probe.installs.find((item) => item.kit === kit);
+  const installed = kitInstalls?.runtimes ?? [];
+  if (installed.length === 0) {
+    throw new Error(ui("noGlobalKitInstalls", { kit: kitName(kit) }));
+  }
+
+  const availableTargets = new Set(installed);
+  const defaultChannel = commandOptions.channel || probe.channel || "stable";
+  let channel = defaultChannel;
+  if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes && !commandOptions.channel) {
+    channel = await selectChannel(commandOptions, { channel: defaultChannel }, allowBack, true);
+    if (channel === BACK) return BACK;
+  }
+  let targets;
+
+  const requestedTarget = commandOptions.target || commandOptions.runtime;
+  if (requestedTarget) {
+    const missing = splitTargetSpec(requestedTarget).filter((target) => !availableTargets.has(target));
+    if (missing.length > 0) {
+      throw new Error(ui("globalTargetNotInstalled", {
+        kit: kitName(kit),
+        target: missing.join(", "),
+        installed: installed.length > 0 ? installed.join(", ") : ui("noneInstalled"),
+      }));
+    }
+    targets = splitTargetSpec(requestedTarget);
+  } else if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
+    const selected = await selectTarget(
+      commandOptions,
+      null,
+      availableTargets,
+      "updateTargetPrompt",
+      allowBack,
+      allowBack,
+      { kit: kitName(kit) },
+    );
+    if (selected === BACK) return BACK;
+    targets = splitTargetSpec(selected);
+  } else {
+    targets = installed;
+  }
+
+  const split = splitRuntimesForUpdate(targets);
+  const commands = [];
+  if (split.update.length > 0) {
+    commands.push(
+      commandOptions.dryRun
+        ? globalUpdatePreviewArgs(channel, split.update, kit)
+        : globalUpdateApplyArgs(channel, split.update, kit),
+    );
+  }
+  for (const target of split.refresh) {
+    commands.push(kitRefreshArgs({ global: true, kit, channel, target }));
+  }
+
+  printSection(ui("updatePlan"));
+  for (const args of commands) {
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
+    process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
+    process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
+  }
+
+  if (commandOptions.dryRun) {
+    process.stdout.write(`\n${ui("dryRunFiles")}\n`);
+    return;
+  }
+
+  if (!(await approve(commandOptions, ui("runAk")))) {
+    process.stdout.write(`${ui("cancelledFiles")}\n`);
+    return;
+  }
+
+  for (const args of commands) {
+    const remoteScript = formatCommand("ak", args, { platform: "linux" });
+    await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
+  }
+
+  await addRecentVpsHost(sshTarget);
+  process.stdout.write(`${ui("updateComplete")}\n`);
+}
 async function update(commandOptions, allowBack = false) {
   let scope;
   let config;
@@ -705,6 +984,9 @@ async function update(commandOptions, allowBack = false) {
     const routeCanGoBack = allowBack || scopeWasPrompted;
     scope = await selectScope("update", commandOptions, allowBack);
     if (scope === BACK) return BACK;
+    if (scope.sshTarget) {
+      return executeRemoteUpdate(commandOptions, scope, allowBack);
+    }
     config = scope.project ? await readProjectConfig(scope.project) : null;
 
     if (
@@ -1413,10 +1695,12 @@ async function main() {
 
   const interactiveRoot = !options.command;
   const languageCanChange = interactiveRoot && !options.language;
-  installedAkVersion = await ensureAk(akBinary);
-  if (interactiveRoot) {
-    showCurrentBinary();
-    await checkInteractiveBinaryUpdate();
+  if (!options.sshTarget) {
+    installedAkVersion = await ensureAk(akBinary);
+    if (interactiveRoot) {
+      showCurrentBinary();
+      await checkInteractiveBinaryUpdate();
+    }
   }
   while (true) {
     if (!options.command) {

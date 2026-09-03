@@ -75,6 +75,22 @@ akh install --global --kit engineer \
   --runtime codex,omp,pi --channel stable
 ```
 
+Cài vào máy chủ Linux VPS qua SSH:
+
+```bash
+akh install --ssh user@host --kit engineer \
+  --runtime codex --channel stable
+```
+
+Cập nhật Kit trên máy chủ Linux VPS qua SSH:
+
+```bash
+akh update --ssh user@host
+akh update --ssh user@host --runtime codex
+```
+
+`--ssh <host>` (alias `--vps`) nhắm mục tiêu vào Linux VPS qua system SSH. Tùy chọn này tự động gán `--global`, kiểm tra binary `ak` trên remote, discover danh sách Kit đã cài qua một probe duy nhất, fail-closed nếu runtime yêu cầu chưa được cài trên VPS, và lưu lại danh sách host gần đây trong `~/.agentkit-helper/config.json`. Nếu `ak` chưa có trên VPS, chế độ interactive sẽ hỏi để tự động bootstrap qua installer chính thức.
+
 Cập nhật:
 
 ```bash
