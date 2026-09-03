@@ -62,6 +62,8 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.match(t("vi", "linkedNativeDestination", { path: "/tmp/project/AGENTS.md" }), /symlink/);
   assert.equal(t("en", "vpsScope"), "Remote VPS via SSH");
   assert.equal(t("vi", "vpsScope"), "Quản lý Kit trên VPS qua SSH");
+  assert.equal(t("en", "updatePlan"), "Update plan:");
+  assert.equal(t("vi", "updatePlan"), "Kế hoạch cập nhật:");
   assert.match(t("en", "vpsHostPrompt"), /SSH host/);
   assert.match(t("vi", "vpsHostPrompt"), /Địa chỉ SSH/);
   assert.match(t("en", "vpsProbing", { host: "1.2.3.4" }), /Probing remote VPS \(1\.2\.3\.4\)/);
