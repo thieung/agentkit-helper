@@ -61,6 +61,7 @@ test("parses an explicit project install", () => {
     maxDepthChanged: false,
     excludes: [],
     sshTarget: null,
+    identityFile: null,
   });
 });
 
@@ -138,6 +139,7 @@ test("accepts runtime as an alias of target", () => {
     maxDepthChanged: false,
     excludes: [],
     sshTarget: null,
+    identityFile: null,
   });
 });
 
@@ -273,5 +275,18 @@ test("parses --ssh and --vps and enforces remote global scope rules", () => {
   assert.throws(
     () => parseArgs(["update", "--ssh", "user@host", "--all"]),
     /--all cannot be combined with project, global, target, or binary-only|--ssh cannot be combined with --all/,
+  );
+});
+
+test("parses --identity only with --ssh", () => {
+  const parsed = parseArgs(["install", "--ssh", "user@host", "--identity", "~/.ssh/id_ed25519"]);
+  assert.equal(parsed.identityFile, "~/.ssh/id_ed25519");
+  assert.throws(
+    () => parseArgs(["install", "--identity", "~/.ssh/id_ed25519"]),
+    /--identity is valid only with --ssh/,
+  );
+  assert.throws(
+    () => parseArgs(["install", "--global", "--identity", "~/.ssh/id_ed25519"]),
+    /--identity is valid only with --ssh/,
   );
 });

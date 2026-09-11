@@ -45,9 +45,11 @@ test("help leads with akh install and update", async () => {
   assert.match(result.stdout, /\n  akh install /);
   assert.match(result.stdout, /\n  akh update /);
   assert.match(result.stdout, /--ssh <host>/);
+  assert.match(result.stdout, /--identity <path>/);
   const viResult = await runCli(["--help", "--language", "vi"], { AK_HELPER_AK_BIN: "ak-not-needed" });
   assert.equal(viResult.code, 0, viResult.stderr);
   assert.match(viResult.stdout, /--ssh <host>/);
+  assert.match(viResult.stdout, /--identity <path>/);
   assert.doesNotMatch(result.stdout, /self-update/);
   assert.doesNotMatch(result.stdout, /update-all/);
   assert.doesNotMatch(result.stdout, /akh sync/);
@@ -1251,6 +1253,50 @@ process.exit(0);
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("remote install --identity pins -i and IdentitiesOnly on every SSH call", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-identity-"));
+  const fakeSsh = join(directory, "fake-ssh.mjs");
+  const log = join(directory, "ssh.log");
+  const helperHome = join(directory, "home");
+  const identity = join(directory, "id_ed25519");
+  await writeFile(identity, "-----BEGIN OPENSSH PRIVATE KEY-----\\nAAAA\\n-----END OPENSSH PRIVATE KEY-----\\n", "utf8");
+  await writeFile(fakeSsh, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(process.env.AK_HELPER_TEST_SSH_LOG, JSON.stringify(args) + "\\n");
+const remoteScript = args[args.length - 1];
+if (remoteScript.includes("===AK_PROBE===")) {
+  process.stdout.write("===AK_PROBE===\\nAK_PATH:/home/ubuntu/.local/bin/ak\\nAK_VERSION:ak 2.15.0\\n");
+}
+process.exit(0);
+`, "utf8");
+  await chmod(fakeSsh, 0o755);
+
+  try {
+    const result = await runCli([
+      "install", "--ssh", "ubuntu@10.0.0.9", "--kit", "engineer", "--runtime", "codex",
+      "--channel", "stable", "--identity", identity, "--yes",
+    ], {
+      AK_HELPER_SSH_BIN: fakeSsh,
+      AK_HELPER_TEST_SSH_LOG: log,
+      AK_HELPER_HOME: helperHome,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(calls.length, 2);
+    for (const args of calls) {
+      assert.equal(args[0], "-i");
+      assert.equal(args[1], identity);
+      assert.deepEqual(args.slice(2, 8), [
+        "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+      ]);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 
 test("remote update delegates ak update for installed runtimes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentkit-helper-remote-update-"));

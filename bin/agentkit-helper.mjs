@@ -20,6 +20,7 @@ import {
 import {
   exportArgs,
   formatCommand,
+  formatSshCommand,
   formatEnvironmentAssignments,
   globalUpdateApplyArgs,
   globalUpdatePreviewArgs,
@@ -48,6 +49,7 @@ import {
   discoverProjectCandidates,
   probeRemoteVps,
 } from "../lib/discovery.mjs";
+import { identityLabel, listSshIdentityFiles, resolveIdentityPath } from "../lib/ssh-identity.mjs";
 import {
   buildIssueReport,
   checkIssueRepository,
@@ -149,6 +151,7 @@ Tùy chọn:
   --project <đường-dẫn>  Project scope
   --global               Scope user/global
   --ssh <host>           Máy chủ Linux VPS qua SSH (alias: --vps)
+  --identity <path>      File identity SSH (dùng với --ssh)
   --runtime <runtimes>   Runtime, phân cách dấu phẩy
   --kit <kit>            engineer hoặc marketing
   --channel <channel>    stable hoặc beta
@@ -181,6 +184,7 @@ Options:
   --project <path>       Project scope
   --global               Runtime user/global scope
   --ssh <host>           Remote Linux VPS host via SSH (alias: --vps)
+  --identity <path>      SSH identity file (with --ssh)
   --runtime <runtimes>   Comma-separated runtimes
   --kit <kit>            engineer or marketing
   --channel <channel>    stable or beta
@@ -331,7 +335,50 @@ function needsScopePrompt(options) {
   );
 }
 
-async function selectVpsHost(allowBack = false) {
+function vpsAuthFromOptions(commandOptions = {}, scope = {}) {
+  const identityFile = scope.identityFile
+    || (commandOptions.identityFile ? resolveIdentityPath(commandOptions.identityFile) : null);
+  return {
+    identityFile: identityFile || null,
+    passwordOnly: Boolean(scope.passwordOnly),
+  };
+}
+
+function printRemoteSshPlan(sshTarget, remoteScript, auth) {
+  process.stdout.write(`\n${colorText(formatSshCommand(sshTarget, remoteScript, auth), "planCommand")}\n`);
+}
+
+async function selectVpsAuth(commandOptions, allowBack) {
+  if (commandOptions.identityFile) {
+    return { identityFile: resolveIdentityPath(commandOptions.identityFile), passwordOnly: false };
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return { identityFile: null, passwordOnly: false };
+  }
+  const files = await listSshIdentityFiles();
+  if (files.length === 0) warning(ui("vpsIdentityNoneFound"));
+  const choices = files.map((path) => ({
+    label: identityLabel(path),
+    value: path,
+  }));
+  choices.push({ label: ui("vpsIdentityDefault"), value: "__DEFAULT__" });
+  choices.push({ label: ui("vpsIdentityEnterPath"), value: "__PATH__" });
+  choices.push({ label: ui("vpsIdentityPassword"), value: "__PASSWORD__" });
+  const selected = await chooseLocalized(allowBack, ui("vpsIdentityPrompt"), choices);
+  if (selected === BACK) return BACK;
+  if (selected === "__DEFAULT__") return { identityFile: null, passwordOnly: false };
+  if (selected === "__PASSWORD__") return { identityFile: null, passwordOnly: true };
+  if (selected === "__PATH__") {
+    const entered = await ask(ui("vpsIdentityPathPrompt"));
+    const resolved = resolveIdentityPath(entered);
+    if (!resolved) return BACK;
+    return { identityFile: resolved, passwordOnly: false };
+  }
+  return { identityFile: selected, passwordOnly: false };
+}
+
+
+async function selectVpsHost(allowBack = false, commandOptions = {}) {
   const globalConfig = await readGlobalHelperConfig();
   const recentHosts = globalConfig.vps?.recentHosts || [];
   let host;
@@ -354,10 +401,13 @@ async function selectVpsHost(allowBack = false) {
   host = String(host || "").trim();
   if (!host) return BACK;
 
+  const auth = await selectVpsAuth(commandOptions, allowBack);
+  if (auth === BACK) return BACK;
+
   let probe;
   try {
     process.stdout.write(`${colorText(`  ${ui("vpsProbing", { host })}`, "prompt")}\n`);
-    probe = await probeRemoteVps(host);
+    probe = await probeRemoteVps(host, auth);
     process.stdout.write(`${colorText(`  ${ui("vpsProbed", { host })}`, "prompt")}\n`);
   } catch (error) {
     warning(error.message);
@@ -373,20 +423,27 @@ async function selectVpsHost(allowBack = false) {
     await withSpinner(
       ui("vpsBootstrapping"),
       ui("vpsBootstrapped", { host }),
-      () => bootstrapRemoteAk(host),
+      () => bootstrapRemoteAk(host, auth),
     );
-    probe = await probeRemoteVps(host);
+    probe = await probeRemoteVps(host, auth);
     if (!probe.akInstalled) {
       throw new Error(ui("vpsAkMissing", { host }));
     }
   }
 
-  return { host, probe };
+  return { host, probe, ...auth };
 }
+
 
 async function selectScope(command, options, allowBack = false) {
   if (options.sshTarget) {
-    return { binaryOnly: false, global: true, project: null, sshTarget: options.sshTarget };
+    return {
+      binaryOnly: false,
+      global: true,
+      project: null,
+      sshTarget: options.sshTarget,
+      ...vpsAuthFromOptions(options),
+    };
   }
   if (options.binaryOnly) {
     return { binaryOnly: true, global: false, project: null };
@@ -442,7 +499,7 @@ async function selectScope(command, options, allowBack = false) {
     return { binaryOnly: false, global: true, project: null };
   }
   if (scope === "vps") {
-    const vps = await selectVpsHost(allowBack);
+    const vps = await selectVpsHost(allowBack, options);
     if (vps === BACK) return BACK;
     return {
       binaryOnly: false,
@@ -450,6 +507,8 @@ async function selectScope(command, options, allowBack = false) {
       project: null,
       sshTarget: vps.host,
       probe: vps.probe,
+      identityFile: vps.identityFile,
+      passwordOnly: vps.passwordOnly,
     };
   }
   return {
@@ -560,17 +619,19 @@ async function prepareBetaBinary(commandOptions, { requiresPreview = false } = {
 async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
   const sshTarget = scope.sshTarget || commandOptions.sshTarget;
   const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
+  const auth = vpsAuthFromOptions(commandOptions, scope);
+  const sshOptions = { ...auth, batchMode };
   let probe = scope.probe;
   if (!probe) {
-    probe = await probeRemoteVps(sshTarget, { batchMode });
+    probe = await probeRemoteVps(sshTarget, sshOptions);
     if (!probe.akInstalled) {
       if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
         warning(ui("vpsAkMissing", { host: sshTarget }));
         if (!(await confirm(ui("vpsBootstrapPrompt", { host: sshTarget }), true))) {
           throw new Error(ui("vpsAkMissing", { host: sshTarget }));
         }
-        await bootstrapRemoteAk(sshTarget);
-        probe = await probeRemoteVps(sshTarget, { batchMode: false });
+        await bootstrapRemoteAk(sshTarget, auth);
+        probe = await probeRemoteVps(sshTarget, { ...auth, batchMode: false });
         if (!probe.akInstalled) {
           throw new Error(ui("vpsAkMissing", { host: sshTarget }));
         }
@@ -605,8 +666,7 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
   for (const target of targets) {
     const args = installArgs({ global: true, target, channel, kit });
     const remoteScript = formatCommand("ak", args, { platform: "linux" });
-    process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
-    process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
+    printRemoteSshPlan(sshTarget, remoteScript, auth);
   }
 
   if (commandOptions.dryRun) {
@@ -623,7 +683,7 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
     const args = installArgs({ global: true, target, channel, kit });
     const remoteScript = formatCommand("ak", args, { platform: "linux" });
     try {
-      await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
+      await runSsh(sshTarget, remoteScript, { stdio: "inherit", ...sshOptions });
     } catch (error) {
       if (!requiresForceConsent(error)) throw error;
       warning(ui("globalForceWarning", { target }));
@@ -638,15 +698,15 @@ async function executeRemoteInstall(commandOptions, scope, allowBack = false) {
       const forceArgs = installArgs({ global: true, target, channel, kit }, { force: true });
       printSection(ui("forceInstallPlan"));
       const forceScript = formatCommand("ak", forceArgs, { platform: "linux" });
-      process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
-      process.stdout.write(`${colorText(`  ${forceScript}`, "planDetail")}\n`);
-      await runSsh(sshTarget, forceScript, { stdio: "inherit", batchMode });
+      printRemoteSshPlan(sshTarget, forceScript, auth);
+      await runSsh(sshTarget, forceScript, { stdio: "inherit", ...sshOptions });
     }
   }
 
   await addRecentVpsHost(sshTarget);
   process.stdout.write(`${ui("installComplete")}\n`);
 }
+
 
 async function install(commandOptions, allowBack = false) {
   let scope;
@@ -871,17 +931,19 @@ async function downgradeBinary(commandOptions, check) {
 async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
   const sshTarget = scope.sshTarget || commandOptions.sshTarget;
   const batchMode = !process.stdin.isTTY || !process.stdout.isTTY || commandOptions.yes;
+  const auth = vpsAuthFromOptions(commandOptions, scope);
+  const sshOptions = { ...auth, batchMode };
   let probe = scope.probe;
   if (!probe) {
-    probe = await probeRemoteVps(sshTarget, { batchMode });
+    probe = await probeRemoteVps(sshTarget, sshOptions);
     if (!probe.akInstalled) {
       if (process.stdin.isTTY && process.stdout.isTTY && !commandOptions.yes) {
         warning(ui("vpsAkMissing", { host: sshTarget }));
         if (!(await confirm(ui("vpsBootstrapPrompt", { host: sshTarget }), true))) {
           throw new Error(ui("vpsAkMissing", { host: sshTarget }));
         }
-        await bootstrapRemoteAk(sshTarget);
-        probe = await probeRemoteVps(sshTarget, { batchMode: false });
+        await bootstrapRemoteAk(sshTarget, auth);
+        probe = await probeRemoteVps(sshTarget, { ...auth, batchMode: false });
         if (!probe.akInstalled) {
           throw new Error(ui("vpsAkMissing", { host: sshTarget }));
         }
@@ -952,8 +1014,7 @@ async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
   printSection(ui("updatePlan"));
   for (const args of commands) {
     const remoteScript = formatCommand("ak", args, { platform: "linux" });
-    process.stdout.write(`\n${colorText(`ssh ${sshTarget}`, "planCommand")}\n`);
-    process.stdout.write(`${colorText(`  ${remoteScript}`, "planDetail")}\n`);
+    printRemoteSshPlan(sshTarget, remoteScript, auth);
   }
 
   if (commandOptions.dryRun) {
@@ -968,12 +1029,13 @@ async function executeRemoteUpdate(commandOptions, scope, allowBack = false) {
 
   for (const args of commands) {
     const remoteScript = formatCommand("ak", args, { platform: "linux" });
-    await runSsh(sshTarget, remoteScript, { stdio: "inherit", batchMode });
+    await runSsh(sshTarget, remoteScript, { stdio: "inherit", ...sshOptions });
   }
 
   await addRecentVpsHost(sshTarget);
   process.stdout.write(`${ui("updateComplete")}\n`);
 }
+
 async function update(commandOptions, allowBack = false) {
   let scope;
   let config;

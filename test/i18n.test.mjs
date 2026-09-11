@@ -72,4 +72,8 @@ test("localizes helper-owned UI without changing runtime identifiers", () => {
   assert.match(t("vi", "vpsAkMissing", { host: "1.2.3.4" }), /CLI ak chưa được cài đặt trên máy chủ 1\.2\.3\.4/);
   assert.match(t("en", "vpsBootstrapPrompt", { host: "1.2.3.4" }), /Install ak on 1\.2\.3\.4/);
   assert.match(t("vi", "vpsBootstrapPrompt", { host: "1.2.3.4" }), /Cài đặt ak trên 1\.2\.3\.4/);
+  assert.equal(t("en", "vpsIdentityPrompt"), "How should SSH authenticate to this VPS?");
+  assert.equal(t("vi", "vpsIdentityDefault"), "Dùng SSH mặc định (agent/config)");
+  assert.match(t("en", "vpsIdentityEnterPath"), /identity path/);
+  assert.match(t("vi", "vpsIdentityPassword"), /Mật khẩu/);
 });
