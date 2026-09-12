@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { listSshIdentityFiles, resolveIdentityPath } from "../lib/ssh-identity.mjs";
 
 const PEM = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n";
@@ -54,6 +54,9 @@ test("returns an empty list when ~/.ssh is not a directory", async () => {
 
 test("resolves identity paths including home shortcuts", () => {
   assert.equal(resolveIdentityPath(""), "");
-  assert.equal(resolveIdentityPath("~/id", { home: "/home/dev" }), join("/home/dev", "id"));
-  assert.equal(resolveIdentityPath("keys/id", { cwd: "/tmp/proj" }), join("/tmp/proj", "keys/id"));
+  const home = resolve(tmpdir(), "akh-home");
+  const cwd = resolve(tmpdir(), "akh-proj");
+  assert.equal(resolveIdentityPath("~", { home }), home);
+  assert.equal(resolveIdentityPath("~/id", { home }), resolve(home, "id"));
+  assert.equal(resolveIdentityPath("keys/id", { cwd }), resolve(cwd, "keys/id"));
 });
