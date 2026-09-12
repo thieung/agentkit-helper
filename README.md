@@ -81,7 +81,7 @@ akh install --global --kit engineer \
 Install into a remote Linux VPS via SSH:
 
 ```bash
-akh install --ssh user@host --kit engineer \
+akh install --ssh user@host --identity ~/.ssh/id_ed25519 --kit engineer \
   --runtime codex --channel stable
 ```
 
@@ -92,7 +92,7 @@ akh update --ssh user@host
 akh update --ssh user@host --runtime codex
 ```
 
-`--ssh <host>` (alias `--vps`) targets a remote Linux VPS over system SSH. It implies `--global`, checks the remote `ak` binary, discovers remote kit installations via a single probe, fail-closes if a requested runtime is missing on the remote host, and persists recent hosts in `~/.agentkit-helper/config.json`. If `ak` is not yet installed on the VPS, interactive mode offers to bootstrap it automatically via the official installer.
+`--ssh <host>` (alias `--vps`) targets a remote Linux VPS over system SSH. It implies `--global`, checks the remote `ak` binary, discovers remote kit installations via a single probe, fail-closes if a requested runtime is missing on the remote host, and persists recent hosts in `~/.agentkit-helper/config.json`. `--identity <path>` pins an SSH private key (`-i` + `IdentitiesOnly=yes`). If `ak` is not yet installed on the VPS, interactive mode offers to bootstrap it automatically via the official installer. Interactive VPS mode also lists identity files from `~/.ssh` before connecting.
 
 Update:
 

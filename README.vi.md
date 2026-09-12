@@ -78,7 +78,7 @@ akh install --global --kit engineer \
 Cài vào máy chủ Linux VPS qua SSH:
 
 ```bash
-akh install --ssh user@host --kit engineer \
+akh install --ssh user@host --identity ~/.ssh/id_ed25519 --kit engineer \
   --runtime codex --channel stable
 ```
 
@@ -89,7 +89,7 @@ akh update --ssh user@host
 akh update --ssh user@host --runtime codex
 ```
 
-`--ssh <host>` (alias `--vps`) nhắm mục tiêu vào Linux VPS qua system SSH. Tùy chọn này tự động gán `--global`, kiểm tra binary `ak` trên remote, discover danh sách Kit đã cài qua một probe duy nhất, fail-closed nếu runtime yêu cầu chưa được cài trên VPS, và lưu lại danh sách host gần đây trong `~/.agentkit-helper/config.json`. Nếu `ak` chưa có trên VPS, chế độ interactive sẽ hỏi để tự động bootstrap qua installer chính thức.
+`--ssh <host>` (alias `--vps`) nhắm mục tiêu vào Linux VPS qua system SSH. Tùy chọn này tự động gán `--global`, kiểm tra binary `ak` trên remote, discover danh sách Kit đã cài qua một probe duy nhất, fail-closed nếu runtime yêu cầu chưa được cài trên VPS, và lưu lại danh sách host gần đây trong `~/.agentkit-helper/config.json`. `--identity <path>` ghim một private key SSH (`-i` + `IdentitiesOnly=yes`). Nếu `ak` chưa có trên VPS, chế độ interactive sẽ hỏi để tự động bootstrap qua installer chính thức. Chế độ VPS interactive cũng list identity file trong `~/.ssh` trước khi kết nối.
 
 Cập nhật:
 

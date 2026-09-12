@@ -152,3 +152,34 @@ test("formats remote SSH invocations with pinned bash -lc, BatchMode, and remote
   const formatted = formatSshCommand("user@vps", script);
   assert.match(formatted, /^ssh -- user@vps 'bash -lc /);
 });
+
+test("pins identity files and password-only auth on SSH argv", () => {
+  const script = "ak kit install engineer --target codex --global";
+  const withKey = sshInvocationArgs("user@vps", script, { identityFile: "/tmp/id_ed25519" });
+  assert.deepEqual(withKey.slice(0, 4), ["-i", "/tmp/id_ed25519", "-o", "IdentitiesOnly=yes"]);
+  assert.equal(withKey[4], "--");
+
+  const batchKey = sshInvocationArgs("user@vps", script, {
+    batchMode: true,
+    identityFile: "/tmp/id_ed25519",
+  });
+  assert.deepEqual(batchKey.slice(0, 8), [
+    "-i", "/tmp/id_ed25519", "-o", "IdentitiesOnly=yes",
+    "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+  ]);
+
+  const passwordOnly = sshInvocationArgs("user@vps", script, { passwordOnly: true });
+  assert.deepEqual(passwordOnly.slice(0, 4), [
+    "-o", "PreferredAuthentications=keyboard-interactive,password",
+    "-o", "PubkeyAuthentication=no",
+  ]);
+
+  assert.throws(
+    () => sshInvocationArgs("user@vps", script, { identityFile: "/tmp/id", passwordOnly: true }),
+    /cannot be used together/,
+  );
+
+  const formatted = formatSshCommand("user@vps", script, { identityFile: "/tmp/id_ed25519" });
+  assert.match(formatted, / -i \/tmp\/id_ed25519 /);
+  assert.match(formatted, /IdentitiesOnly=yes/);
+});
